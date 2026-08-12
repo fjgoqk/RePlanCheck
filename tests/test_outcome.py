@@ -86,7 +86,7 @@ def test_jsonl_writer_appends_machine_readable_record(tmp_path):
     )
 
     record = json.loads(output_path.read_text())
-    assert record["schema_version"] == "1.0"
+    assert record["schema_version"] == "1.1"
     assert record["outcome"]["status"] == "failed"
     assert record["outcome"]["final_output"] is None
     assert record["outcome"]["tool_results"]["QuickRide"] == {"status": "rejected", "value": None}

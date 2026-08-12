@@ -33,7 +33,7 @@ retain the validated MetroHail fare, and return `partial_success`.
 | 00 | ACE baseline reproduction | Complete | `e88f6dc` |
 | 01 | M0 verified local recovery | Complete | included in M1 checkpoint |
 | 02 | M1 structured outcomes and JSONL logging | Complete | `replancheck-m1` |
-| 03 | Deterministic plan replay | Next | planned |
+| 03 | Deterministic plan replay | In progress | fixture v1 |
 | 04 | M2 bounded tool substitution/replanning | Planned | planned |
 | 05 | Final comparative evaluation | Planned | planned |
 

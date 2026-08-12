@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "fixture_id": "case-studies-fare-comparison-v1",
+  "query": "Calculate the fare from Main Street to Elms Ave with QuickRide and MetroHail. DO NOT use f strings and nested function calls including type casting. Remember that tool calls might fail and use try/catch to set reasonable default values.",
+  "tools": [
+    {
+      "name": "QuickRideFareEstimate",
+      "description": "Estimate the QuickRide fare between two locations.",
+      "inputs": [
+        {
+          "name": "pickup",
+          "description": "Ride pickup location.",
+          "type": "str"
+        },
+        {
+          "name": "destination",
+          "description": "Ride destination location.",
+          "type": "str"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fare",
+          "description": "Validated QuickRide fare.",
+          "type": "float"
+        }
+      ]
+    },
+    {
+      "name": "MetroHailFareEstimate",
+      "description": "Estimate the MetroHail fare between two locations.",
+      "inputs": [
+        {
+          "name": "pickup",
+          "description": "Ride pickup location.",
+          "type": "str"
+        },
+        {
+          "name": "destination",
+          "description": "Ride destination location.",
+          "type": "str"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fare",
+          "description": "Validated MetroHail fare.",
+          "type": "float"
+        }
+      ]
+    }
+  ],
+  "script": "def main():\n    try:\n        quickride_result: QuickRideFareEstimate = QuickRideFareEstimate(pickup=\"Main Street\", destination=\"Elms Ave\")\n        quickride_fare: float = quickride_result.fare\n    except Exception:\n        quickride_fare = 0.0\n    try:\n        metrohail_result: MetroHailFareEstimate = MetroHailFareEstimate(pickup=\"Main Street\", destination=\"Elms Ave\")\n        metrohail_fare: float = metrohail_result.fare\n    except Exception:\n        metrohail_fare = 0.0\n    quickride_fare_str: str = str(quickride_fare)\n    metrohail_fare_str: str = str(metrohail_fare)\n    display(\"QuickRide fare: \" + quickride_fare_str)\n    display(\"MetroHail fare: \" + metrohail_fare_str)\n    return quickride_fare\nfinal_output = main()",
+  "expected_tools": [
+    "QuickRide",
+    "MetroHail"
+  ]
+}

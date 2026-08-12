@@ -24,6 +24,12 @@ load_dotenv()
 @click.option("--tool-manifest", default="tools/manifest.json", show_default=True, help="Path to tool manifest JSON")
 @click.option("--temperature", default=0.0, type=float, show_default=True, help="LLM temperature")
 @click.option(
+    "--abstract-plan-fixture",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    default=None,
+    help="Use a reviewed abstract-plan fixture instead of LLM planning",
+)
+@click.option(
     "--results-jsonl",
     type=click.Path(path_type=Path, dir_okay=False),
     default=None,
@@ -31,7 +37,16 @@ load_dotenv()
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--very-verbose", "-vv", is_flag=True, help="Enable very verbose logging")
-def cli(llm_model, embedding_model, tool_manifest, temperature, results_jsonl, verbose, very_verbose):
+def cli(
+    llm_model,
+    embedding_model,
+    tool_manifest,
+    temperature,
+    abstract_plan_fixture,
+    results_jsonl,
+    verbose,
+    very_verbose,
+):
     """Run the ACE agent CLI."""
     # Set up comprehensive logging
     if very_verbose:
@@ -65,11 +80,13 @@ def cli(llm_model, embedding_model, tool_manifest, temperature, results_jsonl, v
         embedding_model=embedding_enum,
         tool_manifest=tool_manifest,
         temperature=temperature,
+        abstract_plan_fixture=abstract_plan_fixture,
     )
 
     # Create development registry with CLI, logging, and debug handlers
     registry = create_development_registry()
     agent = setup_app(config, registry)
+    fixture = getattr(agent.abstract_planner, "fixture", None)
 
     logger.info("ACE agent initialized successfully")
     logger.info(f"Agent configuration: LLM={config.llm_model.value}, Embedding={config.embedding_model.value}")
@@ -109,6 +126,9 @@ def cli(llm_model, embedding_model, tool_manifest, temperature, results_jsonl, v
                     temperature=temperature,
                     duration_ms=round((monotonic() - started_at) * 1000),
                     outcome=result,
+                    plan_fixture=str(abstract_plan_fixture) if abstract_plan_fixture else None,
+                    plan_digest=fixture.plan_digest if fixture else None,
+                    expected_tools=fixture.expected_tools if fixture else None,
                 )
                 logger.info(f"Appended experiment record {record.run_id} to {results_jsonl}")
 
