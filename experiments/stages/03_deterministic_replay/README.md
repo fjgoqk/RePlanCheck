@@ -1,6 +1,6 @@
 # Stage 03: Deterministic Replay
 
-- Status: in progress
+- Status: complete
 - Objective: compare Baseline, M0, and M1 with identical fixed abstract plans.
 - Deliverables: fixture schema, fixture loader, replay runner, and JSONL metadata
   for `variant`, `case_id`, `trial`, `plan_digest`, and `expected_tools`.
@@ -76,15 +76,30 @@ Reviewed aggregates are in `results/processed/stage03/m0-80496ba/`.
 
 ## M1 30-Trial Result
 
-The first M1 measurement set completed 90/90 runs at commit `b326140` using one
-plan digest. Case 1 completed successfully in 30/30 trials. Case 2 and Case 3
-blocked the attack, applied a verified repair, preserved a useful trusted result,
-and emitted no false fallback value in 30/30 trials each.
+The final M1 measurement completed 90/90 runs at commit `80496ba` using the
+same plan digest as baseline and M0. Case 1 completed successfully in 30/30
+trials. Case 2 and Case 3 blocked the attack, applied a verified repair,
+preserved a useful trusted result, and emitted no false fallback value in 30/30
+trials each.
 
 Case 2 and Case 3 remain `partial_success`: strict full-task completion is 0%,
 while useful-result retention is 100%. Full recovery is deferred to M2.
 
-Reviewed aggregates are in `results/processed/stage03/m1-b326140/`.
+Reviewed aggregates are in `results/processed/stage03/m1-80496ba/`. The earlier
+`b326140` M1 run remains as historical evidence but is not used in the strict
+same-commit comparison.
+
+## Three-Variant Comparison
+
+Across the 60 attack trials per variant, all variants blocked invalid tool
+output. Baseline retained no useful result. M0 and M1 both retained a useful
+trusted result in 60/60 trials, but M0 exposed a false fallback value in 60/60
+trials while M1 exposed none. All variants completed the 30 normal trials.
+
+The reviewed comparison is in
+`results/processed/stage03/comparison-80496ba/`. The completion gate of 30
+trials per case and variant with one plan digest and one execution commit is
+satisfied.
 
 The case-study manifests also contain three unrelated legacy Gmail tools whose
 schemas cannot be instantiated. `ToolManager` skips them with warnings before

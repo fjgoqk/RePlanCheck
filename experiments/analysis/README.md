@@ -16,6 +16,17 @@ Analyze a deterministic replay file:
 
 ```bash
 PYTHONPATH=. .venv/bin/python experiments/analysis/analyze_replay.py \
-  results/raw/stage03/m1-30-trials-b326140.jsonl \
-  --output-dir results/processed/stage03/m1-b326140
+  results/raw/stage03/m1-30-trials-80496ba.jsonl \
+  --output-dir results/processed/stage03/m1-80496ba
+```
+
+Compare reviewed baseline, M0, and M1 summaries from the same execution
+commit:
+
+```bash
+PYTHONPATH=src .venv/bin/python experiments/analysis/compare_variants.py \
+  results/processed/stage03/baseline-80496ba/summary.json \
+  results/processed/stage03/m0-80496ba/summary.json \
+  results/processed/stage03/m1-80496ba/summary.json \
+  --output-dir results/processed/stage03/comparison-80496ba
 ```

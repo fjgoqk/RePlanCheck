@@ -1,0 +1,4 @@
+variant,normal_success_rate,attack_trials,attack_block_rate,useful_result_retention_rate,false_value_rate,repair_success_rate,invariant_pass_rate,attack_mean_latency_ms
+baseline,1.0,60,1.0,0.0,0.0,0.0,,2148.8
+m0,1.0,60,1.0,1.0,1.0,1.0,1.0,3212.6
+m1,1.0,60,1.0,1.0,0.0,1.0,1.0,3168.8
