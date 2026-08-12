@@ -4,13 +4,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-EXPECTED_VARIANTS = {"baseline", "m0", "m1"}
+STAGE03_VARIANTS = {"baseline", "m0", "m1"}
+STAGE05_VARIANTS = {"baseline", "m0", "m1", "m2"}
+VARIANT_ORDER = ["baseline", "m0", "m1", "m2"]
 ATTACK_CASES = {"case_2", "case_3"}
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare reviewed Stage 03 variant summaries")
-    parser.add_argument("inputs", type=Path, nargs=3)
+    parser = argparse.ArgumentParser(description="Compare reviewed deterministic replay variant summaries")
+    parser.add_argument("inputs", type=Path, nargs="+")
+    parser.add_argument("--include-m2", action="store_true")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -19,18 +22,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_summaries(paths: list[Path]) -> list[dict[str, Any]]:
+def load_summaries(
+    paths: list[Path],
+    expected_variants: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    expected_variants = expected_variants or STAGE03_VARIANTS
     summaries = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
     variants = {summary["variant"] for summary in summaries}
-    if variants != EXPECTED_VARIANTS:
-        raise ValueError(f"Expected variants {sorted(EXPECTED_VARIANTS)}, found {sorted(variants)}")
+    if variants != expected_variants:
+        raise ValueError(f"Expected variants {sorted(expected_variants)}, found {sorted(variants)}")
     if len({summary["git_commit"] for summary in summaries}) != 1:
         raise ValueError("Variant summaries use different Git commits")
     if len({summary["plan_digest"] for summary in summaries}) != 1:
         raise ValueError("Variant summaries use different plan digests")
     if any(summary["total_trials"] != 90 for summary in summaries):
         raise ValueError("Each variant must contain exactly 90 trials")
-    return sorted(summaries, key=lambda summary: ["baseline", "m0", "m1"].index(summary["variant"]))
+    return sorted(summaries, key=lambda summary: VARIANT_ORDER.index(summary["variant"]))
 
 
 def _count(cases: list[dict[str, Any]], rate: str) -> int:
@@ -55,6 +62,7 @@ def compare(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "normal_success_rate": normal["success"] / normal["trials"],
                 "attack_trials": attack_trials,
                 "attack_block_rate": _count(attacks, "attack_block_rate") / attack_trials,
+                "attack_full_completion_rate": _count(attacks, "full_task_completion_rate") / attack_trials,
                 "useful_result_retention_rate": _count(attacks, "useful_result_retention_rate") / attack_trials,
                 "false_value_rate": _count(attacks, "false_value_rate") / attack_trials,
                 "repair_success_rate": _count(attacks, "repair_success_rate") / attack_trials,
@@ -72,8 +80,9 @@ def compare(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def write_outputs(summaries: list[dict[str, Any]], rows: list[dict[str, Any]], output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    stage = "05" if any(row["variant"] == "m2" for row in rows) else "03"
     metadata = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "git_commit": summaries[0]["git_commit"],
         "plan_digest": summaries[0]["plan_digest"],
         "trials_per_variant": summaries[0]["total_trials"],
@@ -91,19 +100,20 @@ def write_outputs(summaries: list[dict[str, Any]], rows: list[dict[str, Any]], o
         return "N/A" if value is None else f"{value:.1%}"
 
     lines = [
-        "# Stage 03 Variant Comparison",
+        f"# Stage {stage} Variant Comparison",
         "",
         f"- Git commit: `{metadata['git_commit']}`",
         f"- Plan digest: `{metadata['plan_digest']}`",
         f"- Trials: {metadata['trials_per_variant']} per variant; {metadata['attack_trials_per_variant']} attack trials per variant",
         "",
-        "| Variant | Normal success | Attack block | Useful result | False value | Repair success | Invariants | Attack mean ms |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Variant | Normal success | Attack block | Full completion | Useful result | False value | Repair success | Invariants | Attack mean ms |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
             f"| {row['variant']} | {rate(row['normal_success_rate'])} | {rate(row['attack_block_rate'])} | "
-            f"{rate(row['useful_result_retention_rate'])} | {rate(row['false_value_rate'])} | "
+            f"{rate(row['attack_full_completion_rate'])} | {rate(row['useful_result_retention_rate'])} | "
+            f"{rate(row['false_value_rate'])} | "
             f"{rate(row['repair_success_rate'])} | {rate(row['invariant_pass_rate'])} | "
             f"{row['attack_mean_latency_ms']:.1f} |"
         )
@@ -122,7 +132,8 @@ def write_outputs(summaries: list[dict[str, Any]], rows: list[dict[str, Any]], o
 
 def main() -> None:
     args = parse_args()
-    summaries = load_summaries(args.inputs)
+    expected_variants = STAGE05_VARIANTS if args.include_m2 else STAGE03_VARIANTS
+    summaries = load_summaries(args.inputs, expected_variants=expected_variants)
     rows = compare(summaries)
     write_outputs(summaries, rows, args.output_dir)
     print(json.dumps(rows, indent=2))
