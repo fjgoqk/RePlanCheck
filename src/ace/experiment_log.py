@@ -66,7 +66,7 @@ class JsonlExperimentWriter:
             tool_manifest=tool_manifest,
             temperature=temperature,
             duration_ms=duration_ms,
-            git_commit=_current_git_commit(),
+            git_commit=current_git_commit(),
             variant=variant,
             case_id=case_id,
             trial=trial,
@@ -84,7 +84,7 @@ class JsonlExperimentWriter:
         return record
 
 
-def _current_git_commit() -> str | None:
+def current_git_commit() -> str | None:
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],

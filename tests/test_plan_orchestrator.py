@@ -1,5 +1,6 @@
 import base64
 import queue
+import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -194,6 +195,21 @@ def test_plan_orchestrator_initialization():
     assert len(orchestrator.toolrunner_ids) == 0
     assert orchestrator.exception_queue.empty()
     assert len(orchestrator.tool_use_history) == 0
+
+
+def test_stale_connection_before_plan_launch_is_ignored():
+    orchestrator = PlanOrchestrator(MagicMock(), {})
+    orchestrator.plan_execution_sandbox = MagicMock()
+    orchestrator.plan_execution_sandbox.container = None
+    sender, receiver = socket.socketpair()
+
+    sender.sendall(b"stale-runner:TERMINATE:bnVsbA==")
+    sender.shutdown(socket.SHUT_WR)
+    orchestrator._PlanOrchestrator__handle_client(receiver, ("local", 0))
+    sender.close()
+
+    assert orchestrator.exception_queue.empty()
+    assert orchestrator.result is None
 
 
 def test_output_schema_failure_applies_verified_local_repair():

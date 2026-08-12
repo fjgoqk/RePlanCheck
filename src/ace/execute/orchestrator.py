@@ -313,6 +313,13 @@ class PlanOrchestrator:
         self.flush_trusted_outputs()
         return outcome
 
+    def _active_plan_id(self) -> str | None:
+        sandbox = self.plan_execution_sandbox
+        if sandbox is None or sandbox.container is None:
+            return None
+        container_id = sandbox.container.id
+        return container_id[:12] if container_id else None
+
     def __handle_client(self, client_socket: socket.socket, addr: tuple[str, int]) -> None:
         logger.debug(f"New connection from {addr}")
 
@@ -331,7 +338,7 @@ class PlanOrchestrator:
                     logger.warning(f"Invalid message format from {addr}: {message}")
                     continue
 
-                plan_id = self.plan_execution_sandbox.id if self.plan_execution_sandbox else None
+                plan_id = self._active_plan_id()
                 logger.debug(f"Processing message from ID: {id}, plan_id: {plan_id}")
 
                 if id == plan_id:

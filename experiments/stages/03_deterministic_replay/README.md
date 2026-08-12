@@ -38,8 +38,11 @@ PYTHONPATH=src .venv/bin/python \
 ```
 
 Repeat with `--variant m0` and a separate output path. Existing output files are
-rejected by default to prevent mixed or duplicate trials; pass `--overwrite`
-only when intentionally replacing a smoke run.
+rejected by default to prevent mixed or duplicate trials. After an infrastructure
+interruption, rerun the same command with `--resume`; the runner validates the
+schema, variant, plan, model settings, trial numbers, and Git commit before it
+skips completed trials. Pass `--overwrite` only when intentionally replacing a
+smoke run.
 
 The runner freezes the abstract plan but deliberately retains ACE concrete-tool
 mapping and information-flow checks. Concrete mapping variance is measured as an

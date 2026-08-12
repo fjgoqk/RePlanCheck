@@ -6,7 +6,7 @@ from time import monotonic
 from dotenv import load_dotenv
 
 from ace.execute.orchestrator import ExecutionAbortedError
-from ace.experiment_log import JsonlExperimentWriter
+from ace.experiment_log import JsonlExperimentWriter, current_git_commit
 from ace.llm.embeddings import EmbeddingsEnum
 from ace.llm.models import ModelsEnum
 from ace.plan.fixture import PlanFixture
@@ -39,7 +39,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
     )
-    parser.add_argument("--overwrite", action="store_true")
+    output_mode = parser.add_mutually_exclusive_group()
+    output_mode.add_argument("--overwrite", action="store_true")
+    output_mode.add_argument("--resume", action="store_true")
     parser.add_argument("--llm-model", default=ModelsEnum.DEEPSEEK_V4_FLASH.value)
     parser.add_argument("--embedding-model", default=EmbeddingsEnum.BGE_SMALL_EN_V1_5.value)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -48,9 +50,65 @@ def parse_args() -> argparse.Namespace:
         parser.error("--trials must be at least 1")
     if args.output is None:
         args.output = Path(f"results/raw/stage03/{args.variant}-deterministic-replay.jsonl")
-    if args.output.exists() and not args.overwrite:
-        parser.error(f"output already exists: {args.output}; use --overwrite or choose another path")
+    if args.output.exists() and not (args.overwrite or args.resume):
+        parser.error(f"output already exists: {args.output}; use --resume, --overwrite, or choose another path")
     return args
+
+
+def load_completed_trials(
+    path: Path,
+    *,
+    case_ids: list[str],
+    trials: int,
+    variant: str,
+    fixture: PlanFixture,
+    llm_model: str,
+    embedding_model: str,
+    temperature: float,
+) -> set[tuple[str, int]]:
+    if not path.exists():
+        return set()
+
+    expected_commit = current_git_commit()
+    selected_cases = {f"case_{case_id}" for case_id in case_ids}
+    completed: set[tuple[str, int]] = set()
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSONL record at line {line_number}") from exc
+
+        expected_fields = {
+            "schema_version": "1.2",
+            "variant": variant,
+            "git_commit": expected_commit,
+            "plan_digest": fixture.plan_digest,
+            "llm_model": llm_model,
+            "embedding_model": embedding_model,
+            "temperature": temperature,
+        }
+        for field, expected in expected_fields.items():
+            if record.get(field) != expected:
+                raise ValueError(
+                    f"Cannot resume: line {line_number} has {field}={record.get(field)!r}, expected {expected!r}"
+                )
+        if record.get("expected_tools") != fixture.expected_tools:
+            raise ValueError(f"Cannot resume: expected tool set differs at line {line_number}")
+
+        case_id = record.get("case_id")
+        trial = record.get("trial")
+        if case_id not in selected_cases:
+            raise ValueError(f"Cannot resume: unexpected case {case_id!r} at line {line_number}")
+        if not isinstance(trial, int) or not 1 <= trial <= trials:
+            raise ValueError(f"Cannot resume: invalid trial {trial!r} at line {line_number}")
+
+        key = (case_id, trial)
+        if key in completed:
+            raise ValueError(f"Cannot resume: duplicate {case_id} trial {trial}")
+        completed.add(key)
+    return completed
 
 
 def main() -> None:
@@ -59,12 +117,30 @@ def main() -> None:
     if args.overwrite and args.output.exists():
         args.output.unlink()
     fixture = PlanFixture.load(args.fixture)
-    writer = JsonlExperimentWriter(args.output)
     case_ids = list(CASE_ATTACKS) if args.case == "all" else [args.case]
+    completed = (
+        load_completed_trials(
+            args.output,
+            case_ids=case_ids,
+            trials=args.trials,
+            variant=args.variant,
+            fixture=fixture,
+            llm_model=args.llm_model,
+            embedding_model=args.embedding_model,
+            temperature=args.temperature,
+        )
+        if args.resume
+        else set()
+    )
+    writer = JsonlExperimentWriter(args.output)
+    if completed:
+        print(json.dumps({"resume": True, "completed": len(completed)}, separators=(",", ":")))
 
     for case_id in case_ids:
         manifest = Path(f"benchmarks/case_studies/case_{case_id}/tools/manifest.json")
         for trial in range(1, args.trials + 1):
+            if (f"case_{case_id}", trial) in completed:
+                continue
             config = AppConfig(
                 llm_model=ModelsEnum(args.llm_model),
                 embedding_model=EmbeddingsEnum(args.embedding_model),
