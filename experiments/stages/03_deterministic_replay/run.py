@@ -22,7 +22,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run M1 with a deterministic abstract-plan fixture")
     parser.add_argument("--case", choices=["1", "2", "3", "all"], default="all")
     parser.add_argument("--trials", type=int, default=1)
-    parser.add_argument("--variant", default="m1")
     parser.add_argument(
         "--fixture",
         type=Path,
@@ -71,7 +70,7 @@ def main() -> None:
                 temperature=args.temperature,
                 duration_ms=duration_ms,
                 outcome=outcome,
-                variant=args.variant,
+                variant="m1",
                 case_id=f"case_{case_id}",
                 trial=trial,
                 attack_type=CASE_ATTACKS[case_id],
