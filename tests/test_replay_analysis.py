@@ -32,6 +32,7 @@ def _record(run_id: str, case_id: str, trial: int, status: str, attacked: bool) 
         "trial": trial,
         "duration_ms": 100 + trial,
         "expected_tools": ["QuickRide", "MetroHail"],
+        "mapped_tools": ["QuickRide", "MetroHail"],
         "outcome": {
             "status": status,
             "final_output": None if attacked else 49.2,
@@ -73,4 +74,15 @@ def test_replay_validation_rejects_plan_drift(tmp_path):
     path.write_text("\n".join(json.dumps(record) for record in [first, second]))
 
     with pytest.raises(ValueError, match="Plan digest drift"):
+        load_and_validate(path)
+
+
+def test_replay_validation_rejects_mixed_variants(tmp_path):
+    first = _record("run-1", "case_1", 1, "success", False)
+    second = _record("run-2", "case_2", 1, "partial_success", True)
+    second["variant"] = "m0"
+    path = tmp_path / "runs.jsonl"
+    path.write_text("\n".join(json.dumps(record) for record in [first, second]))
+
+    with pytest.raises(ValueError, match="Mixed execution variants"):
         load_and_validate(path)

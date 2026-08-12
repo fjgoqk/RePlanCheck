@@ -13,7 +13,7 @@ from .schema.outcome import ExecutionOutcome
 class ExperimentRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    schema_version: str = "1.1"
+    schema_version: str = "1.2"
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     query: str
@@ -31,6 +31,7 @@ class ExperimentRecord(BaseModel):
     plan_fixture: str | None = None
     plan_digest: str | None = None
     expected_tools: list[str] = Field(default_factory=list)
+    mapped_tools: list[str] = Field(default_factory=list)
     outcome: ExecutionOutcome
 
 
@@ -55,6 +56,7 @@ class JsonlExperimentWriter:
         plan_fixture: str | None = None,
         plan_digest: str | None = None,
         expected_tools: list[str] | None = None,
+        mapped_tools: list[str] | None = None,
     ) -> ExperimentRecord:
         record = ExperimentRecord(
             query=query,
@@ -72,6 +74,7 @@ class JsonlExperimentWriter:
             plan_fixture=plan_fixture,
             plan_digest=plan_digest,
             expected_tools=expected_tools or [],
+            mapped_tools=mapped_tools or [],
             outcome=outcome,
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)

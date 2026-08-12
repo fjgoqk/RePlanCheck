@@ -30,6 +30,35 @@ def _permissions(tools: dict[str, ConcreteToolBase]) -> tuple[str, ...]:
     )
 
 
+def build_output_validation_failure(
+    plan: AbstractPlan,
+    tools: dict[str, ConcreteToolBase],
+    abstract_tool: str,
+    concrete_tool: ConcreteToolBase,
+    output: object,
+    affected_fields: tuple[str, ...],
+    attempt: int,
+) -> ToolFailure:
+    """Create a safe failure record without retaining untrusted output."""
+
+    if abstract_tool not in tools or tools[abstract_tool].name != concrete_tool.name:
+        raise RepairRejectedError("Failed tool is not part of the approved concrete plan")
+
+    plan_digest = _digest_text(plan.script)
+    output_json = json.dumps(output, sort_keys=True, default=str, separators=(",", ":"))
+    output_digest = _digest_text(output_json)
+    failure_id = _digest_text(f"{plan_digest}:{abstract_tool}:{attempt}:{output_digest}")[:16]
+    return ToolFailure(
+        failure_id=failure_id,
+        kind=FailureKind.OUTPUT_SCHEMA_VALIDATION,
+        abstract_tool=abstract_tool,
+        concrete_tool=concrete_tool.name,
+        output_digest=output_digest,
+        affected_fields=affected_fields,
+        attempt=attempt,
+    )
+
+
 class RepairPolicy:
     """Builds and verifies bounded local recovery patches without an LLM."""
 
@@ -48,32 +77,26 @@ class RepairPolicy:
         output: object,
         affected_fields: tuple[str, ...],
     ) -> tuple[ToolFailure, RepairPatch]:
-        if abstract_tool not in tools or tools[abstract_tool].name != concrete_tool.name:
-            raise RepairRejectedError("Failed tool is not part of the approved concrete plan")
-
         attempt = self._attempts[abstract_tool] + 1
         if attempt > self.max_repairs_per_tool:
             raise RepairRejectedError(f"Repair budget exhausted for {abstract_tool}")
 
         plan_digest = _digest_text(plan.script)
-        output_json = json.dumps(output, sort_keys=True, default=str, separators=(",", ":"))
-        output_digest = _digest_text(output_json)
-        failure_id = _digest_text(f"{plan_digest}:{abstract_tool}:{attempt}:{output_digest}")[:16]
-        tool_names = _tool_names(tools)
-        permissions = _permissions(tools)
-
-        failure = ToolFailure(
-            failure_id=failure_id,
-            kind=FailureKind.OUTPUT_SCHEMA_VALIDATION,
+        failure = build_output_validation_failure(
+            plan=plan,
+            tools=tools,
             abstract_tool=abstract_tool,
-            concrete_tool=concrete_tool.name,
-            output_digest=output_digest,
+            concrete_tool=concrete_tool,
+            output=output,
             affected_fields=affected_fields,
             attempt=attempt,
         )
+        tool_names = _tool_names(tools)
+        permissions = _permissions(tools)
+
         candidate = RepairPatch(
-            patch_id=_digest_text(f"repair:{failure_id}")[:16],
-            failure_id=failure_id,
+            patch_id=_digest_text(f"repair:{failure.failure_id}")[:16],
+            failure_id=failure.failure_id,
             action=RepairAction.REJECT_OUTPUT_AND_RESUME,
             abstract_tool=abstract_tool,
             concrete_tool=concrete_tool.name,

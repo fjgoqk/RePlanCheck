@@ -1,6 +1,6 @@
 from typing import Any
 
-from ..execute.orchestrator import PlanOrchestrator
+from ..execute.orchestrator import ExecutionAbortedError, PlanOrchestrator
 from ..logging_config import get_logger
 from ..plan.abstract import AbstractPlanner
 from ..plan.concrete import ConcretePlannerBase
@@ -15,6 +15,7 @@ from ..schema.events import (
     ToolMappingGeneratedEvent,
 )
 from ..schema.handler_registry import HandlerRegistry
+from ..schema.outcome import ExecutionVariant
 from ..schema.recovery import RepairPatch, ToolFailure
 
 logger = get_logger(__name__)
@@ -28,12 +29,15 @@ class AceAgent:
     event_registry: HandlerRegistry
     failure_history: list[ToolFailure]
     repair_history: list[RepairPatch]
+    execution_variant: ExecutionVariant
+    last_tool_mapping: dict[str, str]
 
     def __init__(
         self,
         abstract_planner: AbstractPlanner,
         concrete_planner: ConcretePlannerBase,
         event_registry: HandlerRegistry | AgentEventHandler | None = None,
+        execution_variant: ExecutionVariant = ExecutionVariant.M1,
     ):
         logger.info("Initializing AceAgent")
         self.abstract_planner = abstract_planner
@@ -42,6 +46,8 @@ class AceAgent:
         self.output_log = []
         self.failure_history = []
         self.repair_history = []
+        self.execution_variant = ExecutionVariant(execution_variant)
+        self.last_tool_mapping = {}
 
         # Support both HandlerRegistry and single AgentEventHandler for backward compatibility
         if isinstance(event_registry, HandlerRegistry):
@@ -101,6 +107,9 @@ class AceAgent:
 
             logger.info(f"Tool mapping generated with {len(tool_mapping)} concrete tools")
             logger.debug(f"Concrete tools: {list(tool_mapping.keys())}")
+            self.last_tool_mapping = {
+                abstract_tool: concrete_tool.name for abstract_tool, concrete_tool in tool_mapping.items()
+            }
         except Exception as e:
             logger.error(f"Failed to generate tool mapping: {e}", exc_info=True)
             raise
@@ -115,7 +124,12 @@ class AceAgent:
         logger.info("Phase 3: Executing plan")
         try:
             # Pass the event registry directly to the orchestrator instead of creating a callback
-            with PlanOrchestrator(abstract_plan, tool_mapping, event_handler=self.event_registry) as orchestrator:
+            with PlanOrchestrator(
+                abstract_plan,
+                tool_mapping,
+                event_handler=self.event_registry,
+                execution_variant=self.execution_variant,
+            ) as orchestrator:
                 logger.debug("Plan orchestrator created")
                 orchestrator.launch()
                 logger.debug("Plan orchestrator launched")
@@ -130,6 +144,9 @@ class AceAgent:
                 logger.info("Plan execution completed successfully")
                 logger.debug(f"Execution result type: {type(result).__name__}")
                 logger.debug(f"Tools used: {tool_use}")
+        except ExecutionAbortedError:
+            logger.info("Plan execution aborted by the selected execution policy")
+            raise
         except Exception as e:
             logger.error(f"Plan execution failed: {e}", exc_info=True)
             raise

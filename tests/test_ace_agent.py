@@ -27,10 +27,11 @@ class DummyConcretePlanner:
 
 
 class DummyOrchestrator:
-    def __init__(self, plan, tool_mapping, event_handler=None):
+    def __init__(self, plan, tool_mapping, event_handler=None, execution_variant=None):
         self.plan = plan
         self.tool_mapping = tool_mapping
         self.event_handler = event_handler
+        self.execution_variant = execution_variant
         self.result = "success"
         self.tool_use_history = ["dummy"]
 
@@ -54,4 +55,5 @@ def test_ace_agent_run_query():
     assert result == "success"
     assert agent.output_log[-1] == "success"
     assert "dummy" in agent.tool_use_history
+    assert agent.last_tool_mapping == {"dummy": "dummy_concrete"}
     assert agent.abstract_planner.last_query == "test query"

@@ -5,18 +5,26 @@ import socket
 import threading
 import time
 from queue import Queue
-from typing import Any
+from typing import Any, cast
 
 from ..logging_config import get_logger
-from ..recovery import RepairPolicy
+from ..recovery import RepairPolicy, build_output_validation_failure
 from ..schema.abstract import AbstractPlan
 from ..schema.concrete import ConcreteToolBase
 from ..schema.events import AgentEventHandler, ExecutionOutputEvent, RepairAppliedEvent, ToolFailureEvent
-from ..schema.outcome import ExecutionOutcome, ToolExecutionResult, ToolResultStatus
+from ..schema.outcome import ExecutionOutcome, ExecutionStatus, ExecutionVariant, ToolExecutionResult, ToolResultStatus
 from ..schema.recovery import RepairPatch, ToolFailure
 from .sandbox import PlanExecutionSandbox, ToolExecutionSandbox
 
 logger = get_logger(__name__)
+
+
+class ExecutionAbortedError(RuntimeError):
+    """A fatal execution error that still carries a safe experiment outcome."""
+
+    def __init__(self, outcome: ExecutionOutcome):
+        super().__init__("Execution aborted after tool output schema validation failed")
+        self.outcome = outcome
 
 
 class PlanOrchestrator:
@@ -36,12 +44,14 @@ class PlanOrchestrator:
     repair_history: list[RepairPatch]
     tool_results: dict[str, ToolExecutionResult]
     execution_output_history: list[str]
+    execution_variant: ExecutionVariant
 
     def __init__(
         self,
         plan: AbstractPlan,
         tools: dict[str, ConcreteToolBase],
         event_handler: AgentEventHandler | None = None,
+        execution_variant: ExecutionVariant = ExecutionVariant.M1,
     ):
         logger.info("Initializing PlanOrchestrator")
         self.plan = plan
@@ -56,6 +66,7 @@ class PlanOrchestrator:
         self.result = None
         self.tool_use_history = []
         self.event_handler = event_handler
+        self.execution_variant = ExecutionVariant(execution_variant)
         self.failure_history = []
         self.repair_history = []
         self.tool_results = {}
@@ -199,7 +210,7 @@ class PlanOrchestrator:
         self.execution_output_history.append(message)
 
     def flush_trusted_outputs(self) -> None:
-        if self.failure_history:
+        if self.failure_history and self.execution_variant is ExecutionVariant.M1:
             logger.info("Suppressing generated plan output because execution contains rejected tool results")
             self.execution_output_history.clear()
             return
@@ -222,7 +233,40 @@ class PlanOrchestrator:
         affected_fields: tuple[str, ...] = ()
         errors = getattr(validation_error, "errors", None)
         if callable(errors):
-            affected_fields = tuple(".".join(str(part) for part in error["loc"]) for error in errors())
+            validation_errors = cast(list[dict[str, Any]], errors())
+            affected_fields = tuple(".".join(str(part) for part in error.get("loc", ())) for error in validation_errors)
+
+        if self.execution_variant is ExecutionVariant.BASELINE:
+            failure = build_output_validation_failure(
+                plan=self.plan,
+                tools=self.tools,
+                abstract_tool=abstract_tool,
+                concrete_tool=tool,
+                output=result,
+                affected_fields=affected_fields,
+                attempt=1,
+            )
+            self.failure_history.append(failure)
+            self.tool_results[tool.name] = ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None)
+            self.execution_output_history.clear()
+            outcome = ExecutionOutcome(
+                status=ExecutionStatus.FAILED,
+                final_output=None,
+                tool_results=dict(self.tool_results),
+                failures=list(self.failure_history),
+                repairs=[],
+            )
+            self.result = outcome
+            if self.event_handler:
+                self.event_handler.on_tool_failure(ToolFailureEvent(failure))
+
+            error_message = "Tool output schema validation failed; aborting baseline execution."
+            error_b64 = base64.b64encode(error_message.encode()).decode()
+            if self.plan_execution_sandbox:
+                self.plan_execution_sandbox.send(f"ERROR:{error_b64}")
+            self.exception_queue.put(ExecutionAbortedError(outcome))
+            self.shutdown.set()
+            return
 
         failure, patch = self.repair_policy.propose_output_rejection(
             plan=self.plan,
@@ -254,14 +298,20 @@ class PlanOrchestrator:
         self.shutdown.set()
 
     def finalize_outcome(self, raw_final_output: Any) -> ExecutionOutcome:
-        self.result = ExecutionOutcome.from_execution(
+        outcome_factory = (
+            ExecutionOutcome.from_legacy_recovery
+            if self.execution_variant is ExecutionVariant.M0
+            else ExecutionOutcome.from_execution
+        )
+        outcome = outcome_factory(
             raw_final_output=raw_final_output,
             tool_results=self.tool_results,
             failures=self.failure_history,
             repairs=self.repair_history,
         )
+        self.result = outcome
         self.flush_trusted_outputs()
-        return self.result
+        return outcome
 
     def __handle_client(self, client_socket: socket.socket, addr: tuple[str, int]) -> None:
         logger.debug(f"New connection from {addr}")
@@ -342,7 +392,7 @@ class PlanOrchestrator:
                                 validated = tool.output_schema.model_validate(result_dict)
                                 result_dict = validated.model_dump()
                             except Exception as e:
-                                logger.error(f"Tool output schema validation failed: {e}")
+                                logger.error(f"Tool output schema validation failed: {type(e).__name__}")
                                 self.handle_output_validation_failure(
                                     tool,
                                     result_dict,

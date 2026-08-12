@@ -5,10 +5,12 @@ from time import monotonic
 
 from dotenv import load_dotenv
 
+from ace.execute.orchestrator import ExecutionAbortedError
 from ace.experiment_log import JsonlExperimentWriter
 from ace.llm.embeddings import EmbeddingsEnum
 from ace.llm.models import ModelsEnum
 from ace.plan.fixture import PlanFixture
+from ace.schema.outcome import ExecutionVariant
 from ace.setup import AppConfig, setup_app
 
 CASE_ATTACKS = {
@@ -19,9 +21,14 @@ CASE_ATTACKS = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run M1 with a deterministic abstract-plan fixture")
+    parser = argparse.ArgumentParser(description="Replay one execution policy with a deterministic abstract plan")
     parser.add_argument("--case", choices=["1", "2", "3", "all"], default="all")
     parser.add_argument("--trials", type=int, default=1)
+    parser.add_argument(
+        "--variant",
+        choices=[variant.value for variant in ExecutionVariant],
+        default=ExecutionVariant.M1.value,
+    )
     parser.add_argument(
         "--fixture",
         type=Path,
@@ -30,20 +37,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("results/raw/stage03/m1-deterministic-replay.jsonl"),
+        default=None,
     )
+    parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--llm-model", default=ModelsEnum.DEEPSEEK_V4_FLASH.value)
     parser.add_argument("--embedding-model", default=EmbeddingsEnum.BGE_SMALL_EN_V1_5.value)
     parser.add_argument("--temperature", type=float, default=0.0)
     args = parser.parse_args()
     if args.trials < 1:
         parser.error("--trials must be at least 1")
+    if args.output is None:
+        args.output = Path(f"results/raw/stage03/{args.variant}-deterministic-replay.jsonl")
+    if args.output.exists() and not args.overwrite:
+        parser.error(f"output already exists: {args.output}; use --overwrite or choose another path")
     return args
 
 
 def main() -> None:
     load_dotenv()
     args = parse_args()
+    if args.overwrite and args.output.exists():
+        args.output.unlink()
     fixture = PlanFixture.load(args.fixture)
     writer = JsonlExperimentWriter(args.output)
     case_ids = list(CASE_ATTACKS) if args.case == "all" else [args.case]
@@ -57,10 +71,14 @@ def main() -> None:
                 tool_manifest=str(manifest),
                 temperature=args.temperature,
                 abstract_plan_fixture=str(args.fixture),
+                execution_variant=ExecutionVariant(args.variant),
             )
             agent = setup_app(config)
             started_at = monotonic()
-            outcome = agent.run_query(fixture.query)
+            try:
+                outcome = agent.run_query(fixture.query)
+            except ExecutionAbortedError as exc:
+                outcome = exc.outcome
             duration_ms = round((monotonic() - started_at) * 1000)
             record = writer.append(
                 query=fixture.query,
@@ -70,13 +88,14 @@ def main() -> None:
                 temperature=args.temperature,
                 duration_ms=duration_ms,
                 outcome=outcome,
-                variant="m1",
+                variant=config.execution_variant.value,
                 case_id=f"case_{case_id}",
                 trial=trial,
                 attack_type=CASE_ATTACKS[case_id],
                 plan_fixture=str(args.fixture),
                 plan_digest=fixture.plan_digest,
                 expected_tools=fixture.expected_tools,
+                mapped_tools=sorted(set(agent.last_tool_mapping.values())),
             )
             print(
                 json.dumps(

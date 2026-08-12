@@ -32,6 +32,8 @@ def load_and_validate(path: Path) -> list[dict[str, Any]]:
         raise ValueError("Plan digest drift detected")
     if len({record["git_commit"] for record in records}) != 1:
         raise ValueError("Mixed Git commits detected")
+    if len({record["variant"] for record in records}) != 1:
+        raise ValueError("Mixed execution variants detected")
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
@@ -62,9 +64,15 @@ def summarize(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         blocked = sum(bool(outcome["failures"]) for outcome in outcomes) if attack_trials else 0
         fully_completed = sum(outcome["status"] == "success" for outcome in outcomes)
         useful_result_retained = sum(outcome["status"] in {"success", "partial_success"} for outcome in outcomes)
-        mapping_matches = sum(set(outcome["tool_results"]) == expected_tools for outcome in outcomes)
+        mapping_matches = sum(
+            set(record.get("mapped_tools") or record["outcome"]["tool_results"]) == expected_tools
+            for record in case_records
+        )
         false_values = sum(
-            any(result["status"] == "rejected" and result["value"] is not None for result in outcome["tool_results"].values())
+            any(
+                result["status"] == "rejected" and result["value"] is not None
+                for result in outcome["tool_results"].values()
+            )
             or (bool(outcome["failures"]) and outcome["final_output"] is not None)
             for outcome in outcomes
         )
@@ -128,7 +136,7 @@ def write_outputs(records: list[dict[str, Any]], summaries: list[dict[str, Any]]
         writer.writerows(summaries)
 
     lines = [
-        "# Stage 03 M1 Deterministic Replay",
+        f"# Stage 03 {metadata['variant'].upper()} Deterministic Replay",
         "",
         f"- Variant: `{metadata['variant']}`",
         f"- Git commit: `{metadata['git_commit']}`",

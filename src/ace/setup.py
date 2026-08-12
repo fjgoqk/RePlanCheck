@@ -8,6 +8,7 @@ from ace.plan.concrete import InfoFlowPlanner
 from ace.plan.fixture import FixtureAbstractPlanner, PlanFixture
 from ace.schema.events import AgentEventHandler
 from ace.schema.handler_registry import HandlerRegistry
+from ace.schema.outcome import ExecutionVariant
 from ace.tools.manager import ToolManager
 
 
@@ -19,12 +20,14 @@ class AppConfig:
         tool_manifest="tools/manifest.json",
         temperature=0.0,
         abstract_plan_fixture=None,
+        execution_variant=ExecutionVariant.M1,
     ):
         self.llm_model = llm_model
         self.embedding_model = embedding_model
         self.tool_manifest = tool_manifest
         self.temperature = temperature
         self.abstract_plan_fixture = abstract_plan_fixture
+        self.execution_variant = ExecutionVariant(execution_variant)
 
 
 def setup_app(config: AppConfig, event_registry: HandlerRegistry | AgentEventHandler | None = None) -> AceAgent:
@@ -44,4 +47,9 @@ def setup_app(config: AppConfig, event_registry: HandlerRegistry | AgentEventHan
         analyzer=analyzer,
         filter_threshold=0.1,
     )
-    return AceAgent(abstract_planner=abstract_planner, concrete_planner=concrete_planner, event_registry=event_registry)
+    return AceAgent(
+        abstract_planner=abstract_planner,
+        concrete_planner=concrete_planner,
+        event_registry=event_registry,
+        execution_variant=config.execution_variant,
+    )

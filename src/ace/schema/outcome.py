@@ -12,6 +12,14 @@ class ExecutionStatus(StrEnum):
     FAILED = "failed"
 
 
+class ExecutionVariant(StrEnum):
+    """Execution semantics used by the deterministic replay experiment."""
+
+    BASELINE = "baseline"
+    M0 = "m0"
+    M1 = "m1"
+
+
 class ToolResultStatus(StrEnum):
     SUCCESS = "success"
     REJECTED = "rejected"
@@ -59,4 +67,31 @@ class ExecutionOutcome(BaseModel):
             tool_results=dict(tool_results),
             failures=list(failures),
             repairs=list(repairs),
+        )
+
+    @classmethod
+    def from_legacy_recovery(
+        cls,
+        raw_final_output: Any,
+        tool_results: dict[str, ToolExecutionResult],
+        failures: list[ToolFailure],
+        repairs: list[RepairPatch],
+    ) -> "ExecutionOutcome":
+        """Represent M0, which exposes the generated plan's fallback value."""
+
+        trusted_outcome = cls.from_execution(
+            raw_final_output=raw_final_output,
+            tool_results=tool_results,
+            failures=failures,
+            repairs=repairs,
+        )
+        if not failures:
+            return trusted_outcome
+
+        return cls(
+            status=trusted_outcome.status,
+            final_output=raw_final_output,
+            tool_results=trusted_outcome.tool_results,
+            failures=trusted_outcome.failures,
+            repairs=trusted_outcome.repairs,
         )

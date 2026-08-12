@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.ace.execute.orchestrator import PlanOrchestrator
-from src.ace.schema.outcome import ExecutionStatus, ToolExecutionResult, ToolResultStatus
+from src.ace.execute.orchestrator import ExecutionAbortedError, PlanOrchestrator
+from src.ace.schema.outcome import ExecutionStatus, ExecutionVariant, ToolExecutionResult, ToolResultStatus
 from src.ace.schema.permissions import Permission
 
 
@@ -237,3 +237,72 @@ def test_output_schema_failure_applies_verified_local_repair():
     assert outcome.status is ExecutionStatus.PARTIAL_SUCCESS
     assert outcome.final_output is None
     event_handler.on_execution_output.assert_not_called()
+
+
+def test_m0_recovery_exposes_generated_fallback_and_output():
+    plan = MagicMock()
+    plan.script = "def main():\n    return FareTool()"
+    tool = MagicMock()
+    tool.name = "QuickRide"
+    tool.permissions = {Permission.NETWORK}
+    event_handler = MagicMock()
+    orchestrator = PlanOrchestrator(
+        plan,
+        {"FareTool": tool},
+        event_handler=event_handler,
+        execution_variant=ExecutionVariant.M0,
+    )
+    orchestrator.tool_use_history.append("FareTool")
+    orchestrator.plan_execution_sandbox = MagicMock()
+
+    validation_error = MagicMock()
+    validation_error.errors.return_value = [{"loc": ("fare",)}]
+    orchestrator.handle_output_validation_failure(tool, {"fare": "attack"}, validation_error)
+    orchestrator.handle_print("QuickRide fare: 0.0")
+    orchestrator.tool_results["MetroHail"] = ToolExecutionResult(
+        status=ToolResultStatus.SUCCESS,
+        value={"fare": 33.0},
+    )
+
+    outcome = orchestrator.finalize_outcome(raw_final_output=0.0)
+
+    assert outcome.status is ExecutionStatus.PARTIAL_SUCCESS
+    assert outcome.final_output == 0.0
+    event_handler.on_execution_output.assert_called_once()
+
+
+def test_baseline_schema_failure_aborts_without_repair():
+    plan = MagicMock()
+    plan.script = "def main():\n    return FareTool()"
+    tool = MagicMock()
+    tool.name = "QuickRide"
+    tool.permissions = {Permission.NETWORK}
+    event_handler = MagicMock()
+    orchestrator = PlanOrchestrator(
+        plan,
+        {"FareTool": tool},
+        event_handler=event_handler,
+        execution_variant=ExecutionVariant.BASELINE,
+    )
+    orchestrator.tool_use_history.append("FareTool")
+    orchestrator.plan_execution_sandbox = MagicMock()
+
+    validation_error = MagicMock()
+    validation_error.errors.return_value = [{"loc": ("fare",)}]
+    orchestrator.handle_output_validation_failure(tool, {"fare": "attack"}, validation_error)
+
+    error = orchestrator.exception_queue.get_nowait()
+    assert isinstance(error, ExecutionAbortedError)
+    assert error.outcome.status is ExecutionStatus.FAILED
+    assert error.outcome.final_output is None
+    assert error.outcome.repairs == []
+    assert error.outcome.tool_results["QuickRide"].status is ToolResultStatus.REJECTED
+    assert orchestrator.repair_history == []
+    assert orchestrator.shutdown.is_set()
+    event_handler.on_tool_failure.assert_called_once()
+    event_handler.on_repair_applied.assert_not_called()
+
+    sent = orchestrator.plan_execution_sandbox.send.call_args.args[0]
+    decoded = base64.b64decode(sent.removeprefix("ERROR:")).decode()
+    assert "attack" not in decoded
+    assert "aborting baseline execution" in decoded

@@ -12,23 +12,40 @@ Run one smoke trial per case:
 ```bash
 PYTHONPATH=src .venv/bin/python \
   experiments/stages/03_deterministic_replay/run.py \
+  --variant m1 \
   --case all \
-  --trials 1
+  --trials 1 \
+  --output results/raw/stage03/m1-smoke.jsonl
 ```
 
-Run the M1 measurement set:
+The variants are execution policies, not output labels:
+
+| Variant | Invalid tool output | Generated fallback | Expected attack-case status |
+| --- | --- | --- | --- |
+| `baseline` | reject and abort | not reached | `failed` |
+| `m0` | verified reject and resume | exposed | `partial_success` |
+| `m1` | verified reject and resume | suppressed as `null` | `partial_success` |
+
+Run a 30-trial measurement set for one variant:
 
 ```bash
 PYTHONPATH=src .venv/bin/python \
   experiments/stages/03_deterministic_replay/run.py \
+  --variant baseline \
   --case all \
   --trials 30 \
-  --output results/raw/stage03/m1-30-trials.jsonl
+  --output results/raw/stage03/baseline-30-trials.jsonl
 ```
+
+Repeat with `--variant m0` and a separate output path. Existing output files are
+rejected by default to prevent mixed or duplicate trials; pass `--overwrite`
+only when intentionally replacing a smoke run.
 
 The runner freezes the abstract plan but deliberately retains ACE concrete-tool
 mapping and information-flow checks. Concrete mapping variance is measured as an
-experimental outcome rather than hidden by the fixture.
+experimental outcome rather than hidden by the fixture. Schema 1.2 records
+`mapped_tools` separately from executed `tool_results`, so an early baseline
+abort is not misclassified as a tool-mapping failure.
 
 ## M1 30-Trial Result
 

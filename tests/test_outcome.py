@@ -66,6 +66,21 @@ def test_success_preserves_final_output():
     assert outcome.final_output == 49.2
 
 
+def test_legacy_recovery_exposes_generated_plan_fallback():
+    outcome = ExecutionOutcome.from_legacy_recovery(
+        raw_final_output=0.0,
+        tool_results={
+            "QuickRide": ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None),
+            "MetroHail": ToolExecutionResult(status=ToolResultStatus.SUCCESS, value={"fare": 33.0}),
+        },
+        failures=[_failure()],
+        repairs=[_repair()],
+    )
+
+    assert outcome.status is ExecutionStatus.PARTIAL_SUCCESS
+    assert outcome.final_output == 0.0
+
+
 def test_jsonl_writer_appends_machine_readable_record(tmp_path):
     outcome = ExecutionOutcome.from_execution(
         raw_final_output=0.0,
@@ -86,7 +101,7 @@ def test_jsonl_writer_appends_machine_readable_record(tmp_path):
     )
 
     record = json.loads(output_path.read_text())
-    assert record["schema_version"] == "1.1"
+    assert record["schema_version"] == "1.2"
     assert record["outcome"]["status"] == "failed"
     assert record["outcome"]["final_output"] is None
     assert record["outcome"]["tool_results"]["QuickRide"] == {"status": "rejected", "value": None}
