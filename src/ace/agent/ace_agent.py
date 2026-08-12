@@ -15,6 +15,7 @@ from ..schema.events import (
     ToolMappingGeneratedEvent,
 )
 from ..schema.handler_registry import HandlerRegistry
+from ..schema.recovery import RepairPatch, ToolFailure
 
 logger = get_logger(__name__)
 
@@ -25,6 +26,8 @@ class AceAgent:
     tool_use_history: list[str]
     output_log: list[Any]
     event_registry: HandlerRegistry
+    failure_history: list[ToolFailure]
+    repair_history: list[RepairPatch]
 
     def __init__(
         self,
@@ -37,6 +40,8 @@ class AceAgent:
         self.concrete_planner = concrete_planner
         self.tool_use_history = []
         self.output_log = []
+        self.failure_history = []
+        self.repair_history = []
 
         # Support both HandlerRegistry and single AgentEventHandler for backward compatibility
         if isinstance(event_registry, HandlerRegistry):
@@ -119,6 +124,8 @@ class AceAgent:
 
                 result = orchestrator.result
                 tool_use = orchestrator.tool_use_history
+                failures = getattr(orchestrator, "failure_history", [])
+                repairs = getattr(orchestrator, "repair_history", [])
 
                 logger.info("Plan execution completed successfully")
                 logger.debug(f"Execution result type: {type(result).__name__}")
@@ -132,6 +139,8 @@ class AceAgent:
         # Store results
         self.output_log.append(result)
         self.tool_use_history.extend(tool_use)
+        self.failure_history.extend(failures)
+        self.repair_history.extend(repairs)
 
         logger.info("Query processing completed")
         logger.debug(f"Total output log entries: {len(self.output_log)}")

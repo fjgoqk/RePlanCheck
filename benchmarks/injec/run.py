@@ -8,17 +8,17 @@ import uuid
 from enum import Enum
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from ace.agent.ace_agent import AceAgent
 from ace.execute.orchestrator import PlanOrchestrator
 from ace.llm.base import create_llm
-from ace.llm.embeddings import EmbeddingsEnum
+from ace.llm.embeddings import EmbeddingsEnum, create_embedding
 from ace.llm.models import ModelsEnum
 from ace.logging_config import setup_logging
 from ace.plan.abstract import AbstractPlanner
 from ace.plan.concrete import SimpleConcretePlanner
 from ace.tools.manager import ToolManager
-from dotenv import load_dotenv
-from langchain_openai import OpenAIEmbeddings
 
 from .tools import InjecAgentToolAdapter, MockTool
 
@@ -166,7 +166,7 @@ def main(args: argparse.Namespace):
 
     abs_llm = create_llm(abs_model, temperature=args.abs_temperature)
     conc_llm = create_llm(conc_model, temperature=args.conc_temperature)
-    embedding = OpenAIEmbeddings(model=embedding_model.value)
+    embedding = create_embedding(embedding_model)
 
     # Save metadata
     metadata_path = output_dir / "metadata.json"
@@ -230,21 +230,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--abs_model",
         type=str,
-        default="gpt-4.1-nano-2025-04-14",
+        default="deepseek-v4-flash",
         choices=[m.value for m in ModelsEnum],
         help="Abstract model to use for the benchmark.",
     )
     parser.add_argument(
         "--conc_model",
         type=str,
-        default="gpt-4.1-nano-2025-04-14",
+        default="deepseek-v4-flash",
         choices=[m.value for m in ModelsEnum],
         help="Concrete model to use for the benchmark.",
     )
     parser.add_argument(
         "--embedding_model",
         type=str,
-        default="text-embedding-3-small",
+        default="BAAI/bge-small-en-v1.5",
         choices=[m.value for m in EmbeddingsEnum],
         help="Embedding model to use for the benchmark.",
     )

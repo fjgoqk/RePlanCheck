@@ -9,8 +9,9 @@ to any specific frontend (CLI, web, etc.).
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..schema.abstract import AbstractPlan, AbstractTool
-from ..schema.concrete import ConcreteToolBase
+from .abstract import AbstractPlan, AbstractTool
+from .concrete import ConcreteToolBase
+from .recovery import RepairPatch, ToolFailure
 
 
 @dataclass
@@ -64,6 +65,20 @@ class ExecutionCompletedEvent:
     result: Any
 
 
+@dataclass
+class ToolFailureEvent:
+    """Event emitted when an untrusted tool result fails validation."""
+
+    failure: ToolFailure
+
+
+@dataclass
+class RepairAppliedEvent:
+    """Event emitted after a local repair patch passes verification."""
+
+    patch: RepairPatch
+
+
 class AgentEventHandler(Protocol):
     """Protocol for handling agent events."""
 
@@ -95,6 +110,14 @@ class AgentEventHandler(Protocol):
         """Handle execution completed event."""
         ...
 
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        """Handle rejected tool output event."""
+        ...
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
+        """Handle verified local repair event."""
+        ...
+
 
 class NullEventHandler:
     """Event handler that does nothing - useful for headless operation."""
@@ -118,4 +141,10 @@ class NullEventHandler:
         pass
 
     def on_execution_completed(self, event: ExecutionCompletedEvent) -> None:
+        pass
+
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        pass
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
         pass

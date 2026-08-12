@@ -31,6 +31,7 @@ Create a .env file in the project root and add any relevant LLM provider API key
 ```bash
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxx
 ANTHROPIC_API_KEY=sk-xxxxxxxxxxxxxxxxx
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxx
 ```
 
 ### 3. Build docker images
@@ -52,6 +53,12 @@ To run in **interactive mode**, use:
 python -m ace
 ```
 
+The default configuration uses `deepseek-v4-flash` and the local
+`BAAI/bge-small-en-v1.5` embedding model, so only `DEEPSEEK_API_KEY` is required.
+Docker containers connect back through `host.docker.internal`. Plan execution
+times out after 300 seconds by default; override it with
+`ACE_EXECUTION_TIMEOUT_SECONDS` when running larger benchmarks.
+
 ## Experiments
 
 ### Case-Studies
@@ -59,6 +66,16 @@ To interactively pick which case study (1–3) to run:
 
 ``` bash
 ./benchmarks/case_studies/run.sh 
+```
+
+The case studies use `deepseek-v4-flash` with the local
+`BAAI/bge-small-en-v1.5` embedding model by default. DeepSeek thinking mode is
+disabled for compatibility with ACE's structured planning. The local embedding
+model is downloaded on first use and does not require an API key. Override the
+models when needed:
+
+```bash
+ACE_LLM_MODEL=gpt-4.1-mini-2025-04-14 ./benchmarks/case_studies/run.sh
 ```
 
 ### LangChain

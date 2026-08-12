@@ -1,14 +1,19 @@
 import base64
 import json
+import os
 import socket
 import threading
+import time
 from queue import Queue
 from typing import Any
 
 from ..logging_config import get_logger
+from ..recovery import RepairPolicy
 from ..schema.abstract import AbstractPlan
 from ..schema.concrete import ConcreteToolBase
-from ..schema.events import AgentEventHandler, ExecutionOutputEvent
+from ..schema.events import AgentEventHandler, ExecutionOutputEvent, RepairAppliedEvent, ToolFailureEvent
+from ..schema.outcome import ExecutionOutcome, ToolExecutionResult, ToolResultStatus
+from ..schema.recovery import RepairPatch, ToolFailure
 from .sandbox import PlanExecutionSandbox, ToolExecutionSandbox
 
 logger = get_logger(__name__)
@@ -22,10 +27,15 @@ class PlanOrchestrator:
     listener_thread: threading.Thread | None
     shutdown: threading.Event
     toolrunner_ids: set[str]
+    toolrunner_context: dict[str, tuple[str, ToolExecutionSandbox]]
     exception_queue: Queue
-    result: Any | None
+    result: ExecutionOutcome | None
     tool_use_history: list[str]
     event_handler: AgentEventHandler | None
+    failure_history: list[ToolFailure]
+    repair_history: list[RepairPatch]
+    tool_results: dict[str, ToolExecutionResult]
+    execution_output_history: list[str]
 
     def __init__(
         self,
@@ -41,10 +51,16 @@ class PlanOrchestrator:
         self.plan_execution_sandbox = None
         self.tool_execution_sandbox = None
         self.toolrunner_ids = set()
+        self.toolrunner_context = {}
         self.exception_queue = Queue()
         self.result = None
         self.tool_use_history = []
         self.event_handler = event_handler
+        self.failure_history = []
+        self.repair_history = []
+        self.tool_results = {}
+        self.execution_output_history = []
+        self.repair_policy = RepairPolicy(max_repairs_per_tool=1)
 
         logger.debug(f"Plan has {len(plan.abs_tools)} abstract tools")
         logger.debug(f"Tool mapping has {len(tools)} concrete tools")
@@ -96,12 +112,24 @@ class PlanOrchestrator:
             logger.error(f"Failed to launch plan execution sandbox: {e}", exc_info=True)
             raise
 
-    def join(self) -> None:
+    def join(self, timeout: float | None = None) -> None:
+        if timeout is None:
+            timeout = float(os.getenv("ACE_EXECUTION_TIMEOUT_SECONDS", "300"))
+
         logger.debug("Joining orchestrator threads")
+        timed_out = False
         try:
             if self.listener_thread:
-                self.listener_thread.join()
-                logger.debug("Listener thread joined")
+                deadline = time.monotonic() + timeout
+                while self.listener_thread.is_alive() and self.exception_queue.empty():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    self.listener_thread.join(timeout=min(0.2, remaining))
+
+                if not self.listener_thread.is_alive():
+                    logger.debug("Listener thread joined")
         finally:
             self.kill()
 
@@ -109,6 +137,8 @@ class PlanOrchestrator:
             exception = self.exception_queue.get()
             logger.error(f"Orchestrator completed with exception: {exception}")
             raise exception
+        elif timed_out:
+            raise TimeoutError(f"Plan execution exceeded {timeout:g} seconds")
         else:
             logger.info("Orchestrator completed successfully")
 
@@ -152,8 +182,10 @@ class PlanOrchestrator:
         try:
             self.tool_execution_sandbox.launch(tool_args, tool_kwargs)
             if self.tool_execution_sandbox:
-                self.toolrunner_ids.add(self.tool_execution_sandbox.id)
-                logger.debug(f"Tool {tool_name} execution started with container ID: {self.tool_execution_sandbox.id}")
+                runner_id = self.tool_execution_sandbox.id
+                self.toolrunner_ids.add(runner_id)
+                self.toolrunner_context[runner_id] = (tool_name, self.tool_execution_sandbox)
+                logger.debug(f"Tool {tool_name} execution started with container ID: {runner_id}")
         except Exception as e:
             logger.error(f"Failed to execute tool {tool_name}: {e}", exc_info=True)
             self.exception_queue.put(ValueError(f"Failed to execute tool {tool_name}: {e}"))
@@ -164,17 +196,72 @@ class PlanOrchestrator:
 
     def handle_print(self, message: str) -> None:
         logger.debug(f"Received PRINT message: {message[:100]}...")
+        self.execution_output_history.append(message)
+
+    def flush_trusted_outputs(self) -> None:
+        if self.failure_history:
+            logger.info("Suppressing generated plan output because execution contains rejected tool results")
+            self.execution_output_history.clear()
+            return
+
+        for message in self.execution_output_history:
+            if self.event_handler:
+                self.event_handler.on_execution_output(ExecutionOutputEvent(message))
+            else:
+                print("PRINT:", message)
+        self.execution_output_history.clear()
+
+    def handle_output_validation_failure(
+        self,
+        tool: ConcreteToolBase,
+        result: object,
+        validation_error: Exception,
+        abstract_tool: str | None = None,
+    ) -> None:
+        abstract_tool = abstract_tool or (self.tool_use_history[-1] if self.tool_use_history else "")
+        affected_fields: tuple[str, ...] = ()
+        errors = getattr(validation_error, "errors", None)
+        if callable(errors):
+            affected_fields = tuple(".".join(str(part) for part in error["loc"]) for error in errors())
+
+        failure, patch = self.repair_policy.propose_output_rejection(
+            plan=self.plan,
+            tools=self.tools,
+            abstract_tool=abstract_tool,
+            concrete_tool=tool,
+            output=result,
+            affected_fields=affected_fields,
+        )
+        self.failure_history.append(failure)
+        self.repair_history.append(patch)
+        self.tool_results[tool.name] = ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None)
+
         if self.event_handler:
-            self.event_handler.on_execution_output(ExecutionOutputEvent(message))
-        else:
-            # Fallback to simple print if no event handler provided
-            print("PRINT:", message)
+            self.event_handler.on_tool_failure(ToolFailureEvent(failure))
+            self.event_handler.on_repair_applied(RepairAppliedEvent(patch))
+
+        error_message = (
+            f"Rejected invalid output from {tool.name}; resume through the trusted plan's existing exception handler."
+        )
+        error_b64 = base64.b64encode(error_message.encode()).decode()
+        if self.plan_execution_sandbox:
+            self.plan_execution_sandbox.send(f"ERROR:{error_b64}")
 
     def handle_terminate(self) -> None:
         logger.info("Received TERMINATE message")
         if self.plan_execution_sandbox:
             self.plan_execution_sandbox.kill()
         self.shutdown.set()
+
+    def finalize_outcome(self, raw_final_output: Any) -> ExecutionOutcome:
+        self.result = ExecutionOutcome.from_execution(
+            raw_final_output=raw_final_output,
+            tool_results=self.tool_results,
+            failures=self.failure_history,
+            repairs=self.repair_history,
+        )
+        self.flush_trusted_outputs()
+        return self.result
 
     def __handle_client(self, client_socket: socket.socket, addr: tuple[str, int]) -> None:
         logger.debug(f"New connection from {addr}")
@@ -220,7 +307,8 @@ class PlanOrchestrator:
                         # Extract final output
                         msg_b64 = message[len("TERMINATE:") :]
                         msg_str = base64.b64decode(msg_b64).decode()
-                        self.result = json.loads(msg_str)
+                        raw_final_output = json.loads(msg_str)
+                        self.finalize_outcome(raw_final_output)
                         logger.info(f"Plan execution completed with result: {type(self.result).__name__}")
 
                         # Cleanup orchestrator
@@ -237,8 +325,14 @@ class PlanOrchestrator:
                         # Decode result to dict
                         result_json = base64.b64decode(result_b64).decode()
                         result_dict = json.loads(result_json)
+                        abstract_tool = ""
                         tool = None
-                        if self.tool_execution_sandbox:
+                        runner_context = self.toolrunner_context.get(id)
+                        if runner_context:
+                            abstract_tool, tool_sandbox = runner_context
+                            tool = tool_sandbox.tool
+                            tool_sandbox.kill()
+                        elif self.tool_execution_sandbox:
                             tool = self.tool_execution_sandbox.tool
                             self.tool_execution_sandbox.kill()
 
@@ -249,13 +343,21 @@ class PlanOrchestrator:
                                 result_dict = validated.model_dump()
                             except Exception as e:
                                 logger.error(f"Tool output schema validation failed: {e}")
-                                error_b64 = base64.b64encode(str(e).encode()).decode()
-                                if self.plan_execution_sandbox:
-                                    self.plan_execution_sandbox.send(f"ERROR:{error_b64}")
-                                self.exception_queue.put(ValueError(f"Tool output schema validation failed: {e}"))
+                                self.handle_output_validation_failure(
+                                    tool,
+                                    result_dict,
+                                    e,
+                                    abstract_tool=abstract_tool,
+                                )
                                 if self.tool_execution_sandbox:
                                     self.tool_execution_sandbox.kill()
                                 continue
+
+                        if tool:
+                            self.tool_results[tool.name] = ToolExecutionResult(
+                                status=ToolResultStatus.SUCCESS,
+                                value=result_dict,
+                            )
 
                         # Encode validated dict and send to worker
                         if self.plan_execution_sandbox:

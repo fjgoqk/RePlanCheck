@@ -16,6 +16,8 @@ from .events import (
     ExecutionOutputEvent,
     ExecutionStartedEvent,
     PlanGeneratedEvent,
+    RepairAppliedEvent,
+    ToolFailureEvent,
     ToolMappingFailedEvent,
     ToolMappingGeneratedEvent,
 )
@@ -90,6 +92,12 @@ class HandlerRegistry:
     def on_execution_completed(self, event: ExecutionCompletedEvent) -> None:
         """Notify all handlers of execution completed event."""
         self._safe_notify("ExecutionCompleted", event, "on_execution_completed")
+
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        self._safe_notify("ToolFailure", event, "on_tool_failure")
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
+        self._safe_notify("RepairApplied", event, "on_repair_applied")
 
     def __len__(self) -> int:
         """Return the number of registered handlers."""
@@ -201,6 +209,15 @@ class LoggingEventHandler:
         result_str = str(event.result)[:100] + "..." if len(str(event.result)) > 100 else str(event.result)
         self.logger.info(f"Execution completed with result: {result_str}")
 
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        self.logger.warning(
+            f"Rejected output from {event.failure.abstract_tool} ({event.failure.kind.value}); "
+            f"digest={event.failure.output_digest}"
+        )
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
+        self.logger.info(f"Applied verified repair {event.patch.patch_id}: {event.patch.action.value}")
+
 
 @register_handler
 class MetricsEventHandler:
@@ -216,6 +233,8 @@ class MetricsEventHandler:
             "executions_completed": 0,
             "output_messages": 0,
             "total_script_length": 0,
+            "tool_failures": 0,
+            "repairs_applied": 0,
         }
         self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
 
@@ -241,6 +260,12 @@ class MetricsEventHandler:
     def on_execution_completed(self, event: ExecutionCompletedEvent) -> None:
         self.metrics["executions_completed"] += 1
         self.logger.debug(f"Current metrics: {self.metrics}")
+
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        self.metrics["tool_failures"] += 1
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
+        self.metrics["repairs_applied"] += 1
 
     def get_metrics(self) -> dict:
         """Get a copy of current metrics."""
@@ -302,6 +327,14 @@ class DebugEventHandler:
         self.logger.debug(f"[{self.event_count}] ExecutionCompleted: {result_type}")
         self.logger.debug(f"  Total events processed: {self.event_count}")
 
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        self.event_count += 1
+        self.logger.debug(f"[{self.event_count}] ToolFailure: {event.failure.failure_id}")
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
+        self.event_count += 1
+        self.logger.debug(f"[{self.event_count}] RepairApplied: {event.patch.patch_id}")
+
 
 class CaptureEventHandler:
     """Handler that captures all events for testing purposes."""
@@ -332,6 +365,12 @@ class CaptureEventHandler:
 
     def on_execution_completed(self, event: ExecutionCompletedEvent) -> None:
         self._capture("execution_completed", event)
+
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        self._capture("tool_failure", event)
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
+        self._capture("repair_applied", event)
 
     def get_events_by_type(self, event_type: str) -> list:
         """Get all captured events of a specific type."""

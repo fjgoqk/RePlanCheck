@@ -124,10 +124,13 @@ def test_info_flow_planner_security_validation(mock_analyzer_class, mock_memory_
 
     # Create planner with mocked dependencies
     planner = InfoFlowPlanner.__new__(InfoFlowPlanner)  # Create without __init__
-    planner.generate_matches_for_tool = lambda tool: [
-        MockConcreteTool(clearances={"public"}),
-        MockConcreteTool(clearances={"private"}),
+    planner.generate_all_feasible_matches = lambda tools: [
+        [
+            MockConcreteTool(clearances={"public"}),
+            MockConcreteTool(clearances={"private"}),
+        ]
     ]
+    planner.analyzer = MagicMock()
 
     plan = MockAbstractPlan([MockAbstractTool("secure_tool")])
 
@@ -158,10 +161,37 @@ def test_info_flow_planner_rejects_insecure_plans(mock_analyzer_class, mock_memo
 
     # Create planner
     planner = InfoFlowPlanner.__new__(InfoFlowPlanner)
-    planner.generate_matches_for_tool = lambda tool: [MockConcreteTool(clearances={"restricted"})]
+    planner.generate_all_feasible_matches = lambda tools: [[MockConcreteTool(clearances={"restricted"})]]
+    planner.analyzer = MagicMock()
 
     plan = MockAbstractPlan([MockAbstractTool("insecure_tool")])
 
     # Test that insecure plan is rejected
     result = planner.implement_plan(plan)
     assert result is None  # Should return None when no secure implementation exists
+
+
+@patch("src.ace.plan.concrete.MemoryModel")
+@patch("src.ace.plan.concrete.FlowAnalyzer")
+def test_info_flow_planner_does_not_reuse_concrete_tool(mock_analyzer_class, mock_memory_class):
+    mock_analyzer = MagicMock()
+    mock_analyzer.valid = True
+    mock_analyzer_class.return_value = mock_analyzer
+    mock_memory_class.return_value = MagicMock()
+
+    quick_ride = MockConcreteTool(name="QuickRide")
+    metro_hail = MockConcreteTool(name="MetroHail")
+    planner = InfoFlowPlanner.__new__(InfoFlowPlanner)
+    planner.generate_all_feasible_matches = MagicMock(
+        return_value=[
+            [quick_ride, metro_hail],
+            [quick_ride, metro_hail],
+        ]
+    )
+    plan = MockAbstractPlan([MockAbstractTool("QuickRideFare"), MockAbstractTool("MetroHailFare")])
+
+    result = planner._implement_plan(plan)
+
+    assert result is not None
+    assert result["QuickRideFare"].name == "QuickRide"
+    assert result["MetroHailFare"].name == "MetroHail"

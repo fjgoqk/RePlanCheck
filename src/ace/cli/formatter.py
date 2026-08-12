@@ -3,6 +3,7 @@ CLI formatting utilities for ACE agent.
 Provides colored, formatted output for enhanced user experience.
 """
 
+import json
 from typing import Any
 
 from rich import box
@@ -13,6 +14,8 @@ from rich.rule import Rule
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
+
+from ..schema.outcome import ExecutionOutcome, ExecutionStatus
 
 
 class CLIFormatter:
@@ -126,7 +129,34 @@ class CLIFormatter:
 
     def print_execution_complete(self, result: Any):
         """Display execution completion with result."""
-        self.print_section_header("EXECUTION COMPLETED", "bright_green")
+        color = "bright_yellow" if isinstance(result, ExecutionOutcome) and result.failures else "bright_green"
+        self.print_section_header("EXECUTION COMPLETED", color)
+
+        if isinstance(result, ExecutionOutcome):
+            status_style = "green" if result.status is ExecutionStatus.SUCCESS else "yellow"
+            self.console.print(f"[bold]Status:[/bold] [{status_style}]{result.status.value}[/{status_style}]")
+
+            result_table = Table(box=box.SIMPLE, show_header=True, header_style="bold bright_cyan")
+            result_table.add_column("Tool", style="bold", width=24)
+            result_table.add_column("Status", width=12)
+            result_table.add_column("Validated Value")
+            for tool_name, tool_result in result.tool_results.items():
+                value = "unavailable" if tool_result.value is None else json.dumps(tool_result.value, ensure_ascii=False)
+                result_table.add_row(tool_name, tool_result.status.value, value)
+            if result.tool_results:
+                self.console.print(result_table)
+
+            if result.final_output is None:
+                self.console.print("[bold]Final output:[/bold] [yellow]unavailable[/yellow]")
+            else:
+                self.console.print(f"[bold]Final output:[/bold] {result.final_output}")
+
+            if result.failures:
+                self.console.print(
+                    f"[yellow]{len(result.failures)} rejected output(s), "
+                    f"{len(result.repairs)} verified repair(s).[/yellow]"
+                )
+            return
 
         if result is not None:
             result_panel = Panel(

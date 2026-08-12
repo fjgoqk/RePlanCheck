@@ -24,6 +24,8 @@ class ModelsEnum(StrEnum):
     GPT_3_5_TURBO_0125 = "gpt-3.5-turbo-0125"
     GPT_4_TURBO_2024_04_09 = "gpt-4-turbo-2024-04-09"
 
+    DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
+
     CLAUDE_4_OPUS_2025_05_14 = "claude-4-opus-20250514"
     CLAUDE_4_SONNET_2025_05_14 = "claude-4-sonnet-20250514"
     CLAUDE_3_7_SONNET_2025_02_19 = "claude-3-7-sonnet-20250219"
@@ -72,6 +74,7 @@ MODEL_PROVIDERS = {
     ModelsEnum.GPT_4_0125_PREVIEW: "openai",
     ModelsEnum.GPT_3_5_TURBO_0125: "openai",
     ModelsEnum.GPT_4_TURBO_2024_04_09: "openai",
+    ModelsEnum.DEEPSEEK_V4_FLASH: "deepseek",
     ModelsEnum.CLAUDE_4_OPUS_2025_05_14: "anthropic",
     ModelsEnum.CLAUDE_4_SONNET_2025_05_14: "anthropic",
     ModelsEnum.CLAUDE_3_7_SONNET_2025_02_19: "anthropic",
@@ -115,6 +118,7 @@ MODEL_NAMES = {
     ModelsEnum.GPT_4_0125_PREVIEW: "GPT-4 Turbo Preview 0125",
     ModelsEnum.GPT_3_5_TURBO_0125: "GPT-3.5 Turbo 0125",
     ModelsEnum.GPT_4_TURBO_2024_04_09: "GPT-4 Turbo",
+    ModelsEnum.DEEPSEEK_V4_FLASH: "DeepSeek V4 Flash",
     ModelsEnum.CLAUDE_4_OPUS_2025_05_14: "Claude 4 Opus (May 2025)",
     ModelsEnum.CLAUDE_4_SONNET_2025_05_14: "Claude 4 Sonnet (May 2025)",
     ModelsEnum.CLAUDE_3_7_SONNET_2025_02_19: "Claude 3.7 Sonnet (Feb 2025)",

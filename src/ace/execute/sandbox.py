@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import os
 import threading
 import time
 from enum import Enum
@@ -39,7 +40,10 @@ class PlanExecutionSandbox:
         # Prepare container inputs
         plan_code = self.plan.compile_for_protocol()
         plan_code_b64 = base64.b64encode(plan_code.encode()).decode()
-        docker_env = {"SCRIPT": plan_code_b64}
+        docker_env = {
+            "SCRIPT": plan_code_b64,
+            "ORCHESTRATOR_HOST": os.getenv("ACE_ORCHESTRATOR_HOST", "host.docker.internal"),
+        }
 
         # Spawn plan execution container
         docker_client = docker.from_env()
@@ -48,6 +52,7 @@ class PlanExecutionSandbox:
             environment=docker_env,
             detach=True,
             ports={"8080/tcp": None},
+            extra_hosts={"host.docker.internal": "host-gateway"},
         )
 
         self.container = container
@@ -149,6 +154,7 @@ class ToolExecutionSandbox:
             "TOOL_CODE": src_code_b64,
             "ARGS": args_b64,
             "KWARGS": kwargs_b64,
+            "ORCHESTRATOR_HOST": os.getenv("ACE_ORCHESTRATOR_HOST", "host.docker.internal"),
         }
 
         # Spawn tool environment
@@ -158,6 +164,7 @@ class ToolExecutionSandbox:
             environment=docker_env,
             detach=True,
             ports={"8080/tcp": None},
+            extra_hosts={"host.docker.internal": "host-gateway"},
         )
 
     def wait_for_result(self, timeout: float | None = None) -> None:

@@ -1,12 +1,16 @@
 import traceback
+from pathlib import Path
+from time import monotonic
 
 import click
 from dotenv import load_dotenv
 
+from ace.experiment_log import JsonlExperimentWriter
 from ace.llm.embeddings import EmbeddingsEnum
 from ace.llm.models import ModelsEnum
 from ace.logging_config import get_logger, setup_logging
 from ace.schema.handler_registry import create_development_registry
+from ace.schema.outcome import ExecutionOutcome, ExecutionStatus
 from ace.setup import AppConfig, setup_app
 
 from .formatter import CLIFormatter
@@ -15,13 +19,19 @@ load_dotenv()
 
 
 @click.command()
-@click.option("--llm-model", default="gpt-4o-mini-2024-07-18", show_default=True, help="LLM model to use")
-@click.option("--embedding-model", default="text-embedding-3-small", show_default=True, help="Embedding model to use")
+@click.option("--llm-model", default="deepseek-v4-flash", show_default=True, help="LLM model to use")
+@click.option("--embedding-model", default="BAAI/bge-small-en-v1.5", show_default=True, help="Embedding model to use")
 @click.option("--tool-manifest", default="tools/manifest.json", show_default=True, help="Path to tool manifest JSON")
 @click.option("--temperature", default=0.0, type=float, show_default=True, help="LLM temperature")
+@click.option(
+    "--results-jsonl",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Append trusted execution records to this JSONL file",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--very-verbose", "-vv", is_flag=True, help="Enable very verbose logging")
-def cli(llm_model, embedding_model, tool_manifest, temperature, verbose, very_verbose):
+def cli(llm_model, embedding_model, tool_manifest, temperature, results_jsonl, verbose, very_verbose):
     """Run the ACE agent CLI."""
     # Set up comprehensive logging
     if very_verbose:
@@ -39,6 +49,7 @@ def cli(llm_model, embedding_model, tool_manifest, temperature, verbose, very_ve
 
     # Initialize CLI formatter
     formatter = CLIFormatter()
+    result_writer = JsonlExperimentWriter(results_jsonl) if results_jsonl else None
 
     # Map string to enum (fallback to value if not found)
     llm_enum = (
@@ -82,14 +93,30 @@ def cli(llm_model, embedding_model, tool_manifest, temperature, verbose, very_ve
 
         logger.info(f"Processing query: {query}")
         try:
+            started_at = monotonic()
             # Create a progress spinner for query processing
             with formatter.create_progress_spinner("Processing query...") as progress:
                 task = progress.add_task("Processing query...", total=None)
                 result = agent.run_query(query)
                 progress.update(task, completed=100)
 
-            formatter.print_success("Query completed successfully")
-            logger.info("Query completed successfully")
+            if result_writer and isinstance(result, ExecutionOutcome):
+                record = result_writer.append(
+                    query=query,
+                    llm_model=config.llm_model.value,
+                    embedding_model=config.embedding_model.value,
+                    tool_manifest=tool_manifest,
+                    temperature=temperature,
+                    duration_ms=round((monotonic() - started_at) * 1000),
+                    outcome=result,
+                )
+                logger.info(f"Appended experiment record {record.run_id} to {results_jsonl}")
+
+            if isinstance(result, ExecutionOutcome) and result.status is not ExecutionStatus.SUCCESS:
+                formatter.print_warning(f"Query completed with status: {result.status.value}")
+            else:
+                formatter.print_success("Query completed successfully")
+            logger.info(f"Query completed with result type {type(result).__name__}")
             logger.debug(f"Query result type: {type(result).__name__}")
             if hasattr(agent, "output_log") and agent.output_log:
                 logger.debug(f"Most recent output: {agent.output_log[-1]}")

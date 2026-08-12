@@ -11,6 +11,8 @@ from ..schema.events import (
     ExecutionOutputEvent,
     ExecutionStartedEvent,
     PlanGeneratedEvent,
+    RepairAppliedEvent,
+    ToolFailureEvent,
     ToolMappingFailedEvent,
     ToolMappingGeneratedEvent,
 )
@@ -54,3 +56,14 @@ class CLIEventHandler:
     def on_execution_completed(self, event: ExecutionCompletedEvent) -> None:
         """Display execution completion in CLI."""
         self.formatter.print_execution_complete(event.result)
+
+    def on_tool_failure(self, event: ToolFailureEvent) -> None:
+        fields = ", ".join(event.failure.affected_fields) or "unknown fields"
+        self.formatter.print_warning(
+            f"Rejected invalid output from {event.failure.concrete_tool} ({fields}); raw content was not trusted."
+        )
+
+    def on_repair_applied(self, event: RepairAppliedEvent) -> None:
+        self.formatter.print_info(
+            f"Verified local repair: {event.patch.action.value}; plan, tools, and permissions unchanged."
+        )

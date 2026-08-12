@@ -13,8 +13,8 @@ from ace.tools.manager import ToolManager
 class AppConfig:
     def __init__(
         self,
-        llm_model=ModelsEnum.GPT_4O_MINI_2024_07_18,
-        embedding_model=EmbeddingsEnum.OPENAI_3_SMALL,
+        llm_model=ModelsEnum.DEEPSEEK_V4_FLASH,
+        embedding_model=EmbeddingsEnum.BGE_SMALL_EN_V1_5,
         tool_manifest="tools/manifest.json",
         temperature=0.0,
     ):

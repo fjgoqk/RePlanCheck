@@ -1,4 +1,4 @@
-from . import abstract, concrete, events, handler_registry, infoflow, lattice, permissions
+from . import abstract, concrete, events, handler_registry, infoflow, lattice, outcome, permissions, recovery
 from .abstract import AbstractPlan, AbstractTool, ToolGenerationResponse
 from .concrete import ConcreteToolBase, CustomTool, LangChainTool
 from .events import (
@@ -9,6 +9,8 @@ from .events import (
     ExecutionStartedEvent,
     NullEventHandler,
     PlanGeneratedEvent,
+    RepairAppliedEvent,
+    ToolFailureEvent,
     ToolMappingFailedEvent,
     ToolMappingGeneratedEvent,
 )
@@ -24,7 +26,9 @@ from .handler_registry import (
     get_global_registry,
     register_handler,
 )
+from .outcome import ExecutionOutcome, ExecutionStatus, ToolExecutionResult, ToolResultStatus
 from .permissions import Permission
+from .recovery import FailureKind, RepairAction, RepairPatch, ToolFailure
 
 __all__ = [
     "AbstractPlan",
@@ -36,8 +40,11 @@ __all__ = [
     "CustomTool",
     "DebugEventHandler",
     "ExecutionCompletedEvent",
+    "ExecutionOutcome",
     "ExecutionOutputEvent",
     "ExecutionStartedEvent",
+    "ExecutionStatus",
+    "FailureKind",
     "HandlerRegistry",
     "LangChainTool",
     "LoggingEventHandler",
@@ -45,9 +52,16 @@ __all__ = [
     "NullEventHandler",
     "Permission",
     "PlanGeneratedEvent",
+    "RepairAction",
+    "RepairAppliedEvent",
+    "RepairPatch",
+    "ToolExecutionResult",
+    "ToolFailure",
+    "ToolFailureEvent",
     "ToolGenerationResponse",
     "ToolMappingFailedEvent",
     "ToolMappingGeneratedEvent",
+    "ToolResultStatus",
     "abstract",
     "concrete",
     "create_development_registry",
@@ -58,6 +72,8 @@ __all__ = [
     "handler_registry",
     "infoflow",
     "lattice",
+    "outcome",
     "permissions",
+    "recovery",
     "register_handler",
 ]

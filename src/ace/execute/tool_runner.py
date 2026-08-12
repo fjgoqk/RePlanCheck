@@ -6,28 +6,27 @@ import os
 import socket
 import sys
 import threading
+import time
 from typing import Any
 
-ORCHESTRATOR_IP = "172.17.0.1"
+ORCHESTRATOR_IP = os.environ.get("ORCHESTRATOR_HOST", "host.docker.internal")
 ORCHESTRATOR_PORT = 65432
 ORCHESTRATOR_ADDR = (ORCHESTRATOR_IP, ORCHESTRATOR_PORT)
 
 
 def handle_write(addr, message):
-    client_socket = None
-    try:
-        print("attempting to write to", addr)
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_socket.connect(addr)
-        message = socket.gethostname() + ":" + message
-        print("Attempting to send " + message)
-        client_socket.send(message.encode())
-        print("tool msg:", message)
-    except Exception as e:
-        print(f"[-] Error sending message to {addr}: {e}")
-    finally:
-        if client_socket:
-            client_socket.close()
+    wire_message = socket.gethostname() + ":" + message
+    for attempt in range(1, 6):
+        try:
+            print(f"attempting to write to {addr} (attempt {attempt}/5)")
+            with socket.create_connection(addr, timeout=5.0) as client_socket:
+                client_socket.sendall(wire_message.encode())
+            print("tool msg:", wire_message)
+            return
+        except OSError as e:
+            print(f"[-] Error sending message to {addr}: {e}")
+            if attempt < 5:
+                time.sleep(0.5)
 
 
 def main() -> None:

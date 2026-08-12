@@ -16,10 +16,10 @@ import astor
 from langchain.schema import Document
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import Runnable, RunnableLambda, RunnablePassthrough
-from langchain_openai import OpenAIEmbeddings
 from pydantic import model_validator
 
 from ..analysis import Analyzer
@@ -303,7 +303,7 @@ class ConcretePlannerBase(ABC):
 class SimpleConcretePlanner(ConcretePlannerBase):
     tool_manager: ToolManager
     base_llm: BaseChatModel
-    embeddings: OpenAIEmbeddings
+    embeddings: Embeddings
     faiss_store: FAISS
     filter_threshold: float
     compat_chain: Runnable
@@ -314,7 +314,7 @@ class SimpleConcretePlanner(ConcretePlannerBase):
         self,
         tool_manager: ToolManager,
         base_llm: BaseChatModel,
-        embedding_model: OpenAIEmbeddings,
+        embedding_model: Embeddings,
         context: str = "",
         analyzer: Optional[Analyzer] = None,
         filter_threshold: float = 0.8,
@@ -569,6 +569,11 @@ class InfoFlowPlanner(SimpleConcretePlanner):
         for i, proposal in enumerate(itertools.product(*matches)):
             logger.debug(f"Evaluating combination {i + 1}/{total_combinations}")
             logger.debug(f"Proposal: {[tool.name for tool in proposal]}")
+
+            tool_names = [tool.name for tool in proposal]
+            if len(tool_names) != len(set(tool_names)):
+                logger.debug(f"Combination {i + 1} reuses a concrete tool and was skipped")
+                continue
 
             memory = MemoryModel(
                 lattice_type=SubsetLattice,
