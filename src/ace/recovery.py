@@ -112,8 +112,58 @@ class RepairPolicy:
         self._attempts[abstract_tool] = attempt
         return failure, replace(candidate, verified=True)
 
+    def propose_substitution(
+        self,
+        plan: AbstractPlan,
+        tools: dict[str, ConcreteToolBase],
+        abstract_tool: str,
+        concrete_tool: ConcreteToolBase,
+        replacement_tool: ConcreteToolBase,
+        approved_tools: tuple[str, ...],
+        approved_permissions: tuple[str, ...],
+        output: object,
+        affected_fields: tuple[str, ...],
+    ) -> tuple[ToolFailure, RepairPatch]:
+        attempt = self._attempts[abstract_tool] + 1
+        if attempt > self.max_repairs_per_tool:
+            raise RepairRejectedError(f"Repair budget exhausted for {abstract_tool}")
+        if concrete_tool.name not in approved_tools or replacement_tool.name not in approved_tools:
+            raise RepairRejectedError("Substitution uses a tool outside the pre-approved recovery set")
+        if concrete_tool.name == replacement_tool.name:
+            raise RepairRejectedError("Substitution must select a different concrete tool")
+
+        plan_digest = _digest_text(plan.script)
+        failure = build_output_validation_failure(
+            plan=plan,
+            tools=tools,
+            abstract_tool=abstract_tool,
+            concrete_tool=concrete_tool,
+            output=output,
+            affected_fields=affected_fields,
+            attempt=attempt,
+        )
+        candidate = RepairPatch(
+            patch_id=_digest_text(f"substitute:{failure.failure_id}:{replacement_tool.name}")[:16],
+            failure_id=failure.failure_id,
+            action=RepairAction.SUBSTITUTE_AND_RESUME,
+            abstract_tool=abstract_tool,
+            concrete_tool=concrete_tool.name,
+            replacement_tool=replacement_tool.name,
+            plan_digest_before=plan_digest,
+            plan_digest_after=plan_digest,
+            tools_before=approved_tools,
+            tools_after=approved_tools,
+            permissions_before=approved_permissions,
+            permissions_after=approved_permissions,
+            attempt=attempt,
+            completed=False,
+        )
+        self.verify(candidate)
+        self._attempts[abstract_tool] = attempt
+        return failure, replace(candidate, verified=True)
+
     def verify(self, patch: RepairPatch) -> None:
-        if patch.action is not RepairAction.REJECT_OUTPUT_AND_RESUME:
+        if patch.action not in {RepairAction.REJECT_OUTPUT_AND_RESUME, RepairAction.SUBSTITUTE_AND_RESUME}:
             raise RepairRejectedError("Unsupported repair action")
         if patch.plan_digest_before != patch.plan_digest_after:
             raise RepairRejectedError("Repair changes the trusted plan")
@@ -123,3 +173,8 @@ class RepairPolicy:
             raise RepairRejectedError("Repair changes the approved permissions")
         if patch.attempt > self.max_repairs_per_tool:
             raise RepairRejectedError("Repair exceeds the per-tool budget")
+        if patch.action is RepairAction.SUBSTITUTE_AND_RESUME:
+            if not patch.replacement_tool:
+                raise RepairRejectedError("Substitution is missing a replacement tool")
+            if patch.concrete_tool not in patch.tools_before or patch.replacement_tool not in patch.tools_before:
+                raise RepairRejectedError("Substitution tool is outside the approved tool set")

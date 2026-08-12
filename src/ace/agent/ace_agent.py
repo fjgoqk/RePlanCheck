@@ -4,6 +4,8 @@ from ..execute.orchestrator import ExecutionAbortedError, PlanOrchestrator
 from ..logging_config import get_logger
 from ..plan.abstract import AbstractPlanner
 from ..plan.concrete import ConcretePlannerBase
+from ..replan import build_approved_substitutions
+from ..schema.concrete import ConcreteToolBase
 from ..schema.events import (
     AbstractToolsGeneratedEvent,
     AgentEventHandler,
@@ -31,6 +33,7 @@ class AceAgent:
     repair_history: list[RepairPatch]
     execution_variant: ExecutionVariant
     last_tool_mapping: dict[str, str]
+    last_approved_substitutions: dict[str, list[str]]
 
     def __init__(
         self,
@@ -38,6 +41,8 @@ class AceAgent:
         concrete_planner: ConcretePlannerBase,
         event_registry: HandlerRegistry | AgentEventHandler | None = None,
         execution_variant: ExecutionVariant = ExecutionVariant.M1,
+        recovery_catalog: dict[str, ConcreteToolBase] | None = None,
+        recovery_substitutions: dict[str, list[str]] | None = None,
     ):
         logger.info("Initializing AceAgent")
         self.abstract_planner = abstract_planner
@@ -48,6 +53,9 @@ class AceAgent:
         self.repair_history = []
         self.execution_variant = ExecutionVariant(execution_variant)
         self.last_tool_mapping = {}
+        self.last_approved_substitutions = {}
+        self.recovery_catalog = recovery_catalog or {}
+        self.recovery_substitutions = recovery_substitutions or {}
 
         # Support both HandlerRegistry and single AgentEventHandler for backward compatibility
         if isinstance(event_registry, HandlerRegistry):
@@ -110,6 +118,14 @@ class AceAgent:
             self.last_tool_mapping = {
                 abstract_tool: concrete_tool.name for abstract_tool, concrete_tool in tool_mapping.items()
             }
+            approved_substitutions = build_approved_substitutions(
+                selected_tools=tool_mapping,
+                recovery_catalog=self.recovery_catalog,
+                requested=self.recovery_substitutions,
+            )
+            self.last_approved_substitutions = {
+                abstract_tool: [tool.name for tool in tools] for abstract_tool, tools in approved_substitutions.items()
+            }
         except Exception as e:
             logger.error(f"Failed to generate tool mapping: {e}", exc_info=True)
             raise
@@ -129,6 +145,7 @@ class AceAgent:
                 tool_mapping,
                 event_handler=self.event_registry,
                 execution_variant=self.execution_variant,
+                approved_substitutions=approved_substitutions,
             ) as orchestrator:
                 logger.debug("Plan orchestrator created")
                 orchestrator.launch()

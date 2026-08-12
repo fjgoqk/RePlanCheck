@@ -81,6 +81,56 @@ def test_legacy_recovery_exposes_generated_plan_fallback():
     assert outcome.final_output == 0.0
 
 
+def test_bounded_replan_returns_success_after_completed_repair():
+    repair = _repair()
+    repair = RepairPatch(
+        **{
+            **repair.__dict__,
+            "action": RepairAction.SUBSTITUTE_AND_RESUME,
+            "replacement_tool": "QuickRideVerified",
+            "completed": True,
+        }
+    )
+    outcome = ExecutionOutcome.from_bounded_replan(
+        raw_final_output=49.2,
+        tool_results={
+            "QuickRide": ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None),
+            "QuickRideVerified": ToolExecutionResult(status=ToolResultStatus.SUCCESS, value={"fare": 49.2}),
+            "MetroHail": ToolExecutionResult(status=ToolResultStatus.SUCCESS, value={"fare": 33.0}),
+        },
+        failures=[_failure()],
+        repairs=[repair],
+    )
+
+    assert outcome.status is ExecutionStatus.SUCCESS
+    assert outcome.final_output == 49.2
+
+
+def test_bounded_replan_suppresses_output_when_replacement_did_not_succeed():
+    repair = _repair()
+    repair = RepairPatch(
+        **{
+            **repair.__dict__,
+            "action": RepairAction.SUBSTITUTE_AND_RESUME,
+            "replacement_tool": "QuickRideVerified",
+            "completed": True,
+        }
+    )
+    outcome = ExecutionOutcome.from_bounded_replan(
+        raw_final_output=0.0,
+        tool_results={
+            "QuickRide": ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None),
+            "QuickRideVerified": ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None),
+            "MetroHail": ToolExecutionResult(status=ToolResultStatus.SUCCESS, value={"fare": 33.0}),
+        },
+        failures=[_failure()],
+        repairs=[repair],
+    )
+
+    assert outcome.status is ExecutionStatus.PARTIAL_SUCCESS
+    assert outcome.final_output is None
+
+
 def test_jsonl_writer_appends_machine_readable_record(tmp_path):
     outcome = ExecutionOutcome.from_execution(
         raw_final_output=0.0,
@@ -101,7 +151,7 @@ def test_jsonl_writer_appends_machine_readable_record(tmp_path):
     )
 
     record = json.loads(output_path.read_text())
-    assert record["schema_version"] == "1.2"
+    assert record["schema_version"] == "1.3"
     assert record["outcome"]["status"] == "failed"
     assert record["outcome"]["final_output"] is None
     assert record["outcome"]["tool_results"]["QuickRide"] == {"status": "rejected", "value": None}

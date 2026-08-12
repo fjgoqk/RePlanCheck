@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from .recovery import RepairPatch, ToolFailure
+from .recovery import RepairAction, RepairPatch, ToolFailure
 
 
 class ExecutionStatus(StrEnum):
@@ -18,6 +18,7 @@ class ExecutionVariant(StrEnum):
     BASELINE = "baseline"
     M0 = "m0"
     M1 = "m1"
+    M2 = "m2"
 
 
 class ToolResultStatus(StrEnum):
@@ -94,4 +95,39 @@ class ExecutionOutcome(BaseModel):
             tool_results=trusted_outcome.tool_results,
             failures=trusted_outcome.failures,
             repairs=trusted_outcome.repairs,
+        )
+
+    @classmethod
+    def from_bounded_replan(
+        cls,
+        raw_final_output: Any,
+        tool_results: dict[str, ToolExecutionResult],
+        failures: list[ToolFailure],
+        repairs: list[RepairPatch],
+    ) -> "ExecutionOutcome":
+        """Return success only when every failure has one completed verified repair."""
+
+        completed_failures = {
+            repair.failure_id
+            for repair in repairs
+            if repair.action is RepairAction.SUBSTITUTE_AND_RESUME
+            and repair.verified
+            and repair.completed
+            and repair.replacement_tool is not None
+            and repair.replacement_tool in tool_results
+            and tool_results[repair.replacement_tool].status is ToolResultStatus.SUCCESS
+        }
+        if failures and all(failure.failure_id in completed_failures for failure in failures):
+            return cls(
+                status=ExecutionStatus.SUCCESS,
+                final_output=raw_final_output,
+                tool_results=dict(tool_results),
+                failures=list(failures),
+                repairs=list(repairs),
+            )
+        return cls.from_execution(
+            raw_final_output=raw_final_output,
+            tool_results=tool_results,
+            failures=failures,
+            repairs=repairs,
         )

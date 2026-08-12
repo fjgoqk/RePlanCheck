@@ -47,6 +47,16 @@ def load_and_validate(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _all_failures_resolved_by_substitution(outcome: dict[str, Any]) -> bool:
+    resolved_failure_ids = {
+        repair.get("failure_id")
+        for repair in outcome["repairs"]
+        if repair.get("action") == "substitute_and_resume" and repair.get("verified") and repair.get("completed", False)
+    }
+    failure_ids = {failure.get("failure_id") for failure in outcome["failures"]}
+    return bool(failure_ids) and None not in failure_ids and failure_ids <= resolved_failure_ids
+
+
 def summarize(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
@@ -73,13 +83,17 @@ def summarize(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 result["status"] == "rejected" and result["value"] is not None
                 for result in outcome["tool_results"].values()
             )
-            or (bool(outcome["failures"]) and outcome["final_output"] is not None)
+            or (
+                bool(outcome["failures"])
+                and outcome["final_output"] is not None
+                and not _all_failures_resolved_by_substitution(outcome)
+            )
             for outcome in outcomes
         )
         repaired = sum(
             bool(outcome["failures"])
             and len(outcome["repairs"]) == len(outcome["failures"])
-            and all(repair["verified"] for repair in outcome["repairs"])
+            and all(repair["verified"] and repair.get("completed", True) for repair in outcome["repairs"])
             for outcome in outcomes
         )
         invariant_runs = [outcome for outcome in outcomes if outcome["repairs"]]
@@ -135,8 +149,9 @@ def write_outputs(records: list[dict[str, Any]], summaries: list[dict[str, Any]]
         writer.writeheader()
         writer.writerows(summaries)
 
+    stage = "04" if metadata["variant"] == "m2" else "03"
     lines = [
-        f"# Stage 03 {metadata['variant'].upper()} Deterministic Replay",
+        f"# Stage {stage} {metadata['variant'].upper()} Deterministic Replay",
         "",
         f"- Variant: `{metadata['variant']}`",
         f"- Git commit: `{metadata['git_commit']}`",

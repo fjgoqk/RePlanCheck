@@ -6,7 +6,7 @@ from time import monotonic
 from dotenv import load_dotenv
 
 from ace.execute.orchestrator import ExecutionAbortedError
-from ace.experiment_log import JsonlExperimentWriter, current_git_commit
+from ace.experiment_log import EXPERIMENT_SCHEMA_VERSION, JsonlExperimentWriter, current_git_commit
 from ace.llm.embeddings import EmbeddingsEnum
 from ace.llm.models import ModelsEnum
 from ace.plan.fixture import PlanFixture
@@ -45,14 +45,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llm-model", default=ModelsEnum.DEEPSEEK_V4_FLASH.value)
     parser.add_argument("--embedding-model", default=EmbeddingsEnum.BGE_SMALL_EN_V1_5.value)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--recovery-manifest", type=Path)
+    parser.add_argument(
+        "--substitution",
+        action="append",
+        default=[],
+        metavar="ABSTRACT_TOOL=CONCRETE_TOOL",
+    )
     args = parser.parse_args()
     if args.trials < 1:
         parser.error("--trials must be at least 1")
     if args.output is None:
-        args.output = Path(f"results/raw/stage03/{args.variant}-deterministic-replay.jsonl")
+        stage = "stage04" if args.variant == ExecutionVariant.M2.value else "stage03"
+        args.output = Path(f"results/raw/{stage}/{args.variant}-deterministic-replay.jsonl")
+    args.recovery_substitutions = parse_substitutions(parser, args.substitution)
+    if args.variant == ExecutionVariant.M2.value and not (args.recovery_manifest and args.recovery_substitutions):
+        parser.error("m2 requires --recovery-manifest and at least one --substitution")
+    if args.variant != ExecutionVariant.M2.value and (args.recovery_manifest or args.recovery_substitutions):
+        parser.error("recovery substitutions are only valid for m2")
     if args.output.exists() and not (args.overwrite or args.resume):
         parser.error(f"output already exists: {args.output}; use --resume, --overwrite, or choose another path")
     return args
+
+
+def parse_substitutions(parser: argparse.ArgumentParser, values: list[str]) -> dict[str, list[str]]:
+    substitutions: dict[str, list[str]] = {}
+    for value in values:
+        abstract_tool, separator, concrete_tool = value.partition("=")
+        if not separator or not abstract_tool or not concrete_tool:
+            parser.error(f"invalid --substitution value: {value!r}")
+        substitutions.setdefault(abstract_tool, []).append(concrete_tool)
+    return substitutions
 
 
 def load_completed_trials(
@@ -65,6 +88,8 @@ def load_completed_trials(
     llm_model: str,
     embedding_model: str,
     temperature: float,
+    recovery_manifest: str | None = None,
+    approved_substitutions: dict[str, list[str]] | None = None,
 ) -> set[tuple[str, int]]:
     if not path.exists():
         return set()
@@ -81,13 +106,15 @@ def load_completed_trials(
             raise ValueError(f"Invalid JSONL record at line {line_number}") from exc
 
         expected_fields = {
-            "schema_version": "1.2",
+            "schema_version": EXPERIMENT_SCHEMA_VERSION,
             "variant": variant,
             "git_commit": expected_commit,
             "plan_digest": fixture.plan_digest,
             "llm_model": llm_model,
             "embedding_model": embedding_model,
             "temperature": temperature,
+            "recovery_manifest": recovery_manifest,
+            "approved_substitutions": approved_substitutions or {},
         }
         for field, expected in expected_fields.items():
             if record.get(field) != expected:
@@ -128,6 +155,8 @@ def main() -> None:
             llm_model=args.llm_model,
             embedding_model=args.embedding_model,
             temperature=args.temperature,
+            recovery_manifest=str(args.recovery_manifest) if args.recovery_manifest else None,
+            approved_substitutions=args.recovery_substitutions,
         )
         if args.resume
         else set()
@@ -148,6 +177,8 @@ def main() -> None:
                 temperature=args.temperature,
                 abstract_plan_fixture=str(args.fixture),
                 execution_variant=ExecutionVariant(args.variant),
+                recovery_manifest=str(args.recovery_manifest) if args.recovery_manifest else None,
+                recovery_substitutions=args.recovery_substitutions,
             )
             agent = setup_app(config)
             started_at = monotonic()
@@ -172,6 +203,8 @@ def main() -> None:
                 plan_digest=fixture.plan_digest,
                 expected_tools=fixture.expected_tools,
                 mapped_tools=sorted(set(agent.last_tool_mapping.values())),
+                recovery_manifest=str(args.recovery_manifest) if args.recovery_manifest else None,
+                approved_substitutions=agent.last_approved_substitutions,
             )
             print(
                 json.dumps(

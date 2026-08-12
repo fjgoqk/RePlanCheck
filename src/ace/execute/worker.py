@@ -19,6 +19,7 @@ ORCHESTRATOR_PORT = 65432
 ORCHESTRATOR_ADDR = (ORCHESTRATOR_IP, ORCHESTRATOR_PORT)
 
 response_queue = queue.Queue()
+shutdown = threading.Event()
 
 orchestrator_response = ""
 
@@ -64,11 +65,11 @@ def start_listener():
     server.settimeout(1.0)
     print(f"[WORKER] listening on {listener_ip}:{listener_port}")
 
-    while True:
+    while not shutdown.is_set():
         try:
             client_socket, addr = server.accept()
-        except TimeoutError:
-            continue  # Check the shutdown event again
+        except socket.timeout:  # noqa: UP041 - worker image compatibility
+            continue
         threading.Thread(target=handle_client, args=(client_socket, addr), daemon=True).start()
 
 
@@ -147,9 +148,10 @@ def main() -> None:
     writer_thread = threading.Thread(target=handle_write, args=(ORCHESTRATOR_ADDR, term_msg), daemon=True)
     writer_thread.start()
 
-    # Signal the listener to shutdown and wait for it to finish.
+    # Signal the listener to shut down after the termination message is sent.
     writer_thread.join()
-    listener_thread.join()
+    shutdown.set()
+    listener_thread.join(timeout=2.0)
 
 
 if __name__ == "__main__":

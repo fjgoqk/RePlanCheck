@@ -8,6 +8,7 @@ class FailureKind(StrEnum):
 
 class RepairAction(StrEnum):
     REJECT_OUTPUT_AND_RESUME = "reject_output_and_resume"
+    SUBSTITUTE_AND_RESUME = "substitute_and_resume"
 
 
 @dataclass(frozen=True)
@@ -36,3 +37,5 @@ class RepairPatch:
     permissions_after: tuple[str, ...]
     attempt: int
     verified: bool = False
+    replacement_tool: str | None = None
+    completed: bool = True

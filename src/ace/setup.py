@@ -21,6 +21,8 @@ class AppConfig:
         temperature=0.0,
         abstract_plan_fixture=None,
         execution_variant=ExecutionVariant.M1,
+        recovery_manifest=None,
+        recovery_substitutions=None,
     ):
         self.llm_model = llm_model
         self.embedding_model = embedding_model
@@ -28,12 +30,18 @@ class AppConfig:
         self.temperature = temperature
         self.abstract_plan_fixture = abstract_plan_fixture
         self.execution_variant = ExecutionVariant(execution_variant)
+        self.recovery_manifest = recovery_manifest
+        self.recovery_substitutions = recovery_substitutions or {}
 
 
 def setup_app(config: AppConfig, event_registry: HandlerRegistry | AgentEventHandler | None = None) -> AceAgent:
     base_llm = create_llm(config.llm_model, temperature=config.temperature)
     embedding_model = create_embedding(config.embedding_model)
     tool_manager = ToolManager.from_manifest(config.tool_manifest)
+    recovery_catalog = {}
+    if config.recovery_manifest:
+        recovery_manager = ToolManager.from_manifest(config.recovery_manifest)
+        recovery_catalog = {tool.name: tool for tool in recovery_manager.tools}
     analyzer = configure_analyzer()
     if config.abstract_plan_fixture:
         fixture = PlanFixture.load(config.abstract_plan_fixture)
@@ -52,4 +60,6 @@ def setup_app(config: AppConfig, event_registry: HandlerRegistry | AgentEventHan
         concrete_planner=concrete_planner,
         event_registry=event_registry,
         execution_variant=config.execution_variant,
+        recovery_catalog=recovery_catalog,
+        recovery_substitutions=config.recovery_substitutions,
     )

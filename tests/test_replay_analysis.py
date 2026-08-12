@@ -66,6 +66,30 @@ def test_replay_summary_distinguishes_attack_metrics(tmp_path):
     assert summaries["case_2"]["invariant_pass_rate"] == 1.0
 
 
+def test_replay_summary_accepts_final_value_after_verified_substitution():
+    record = _record("run-1", "case_2", 1, "success", True)
+    record["variant"] = "m2"
+    record["outcome"]["failures"][0]["failure_id"] = "failure-1"
+    record["outcome"]["repairs"][0].update(
+        {
+            "failure_id": "failure-1",
+            "action": "substitute_and_resume",
+            "completed": True,
+        }
+    )
+    record["outcome"]["final_output"] = 49.2
+    record["outcome"]["tool_results"]["QuickRideVerified"] = {
+        "status": "success",
+        "value": {"fare": 49.2},
+    }
+
+    summary = summarize([record])[0]
+
+    assert summary["full_task_completion_rate"] == 1.0
+    assert summary["false_value_rate"] == 0.0
+    assert summary["repair_success_rate"] == 1.0
+
+
 def test_replay_validation_rejects_plan_drift(tmp_path):
     first = _record("run-1", "case_1", 1, "success", False)
     second = _record("run-2", "case_2", 1, "partial_success", True)

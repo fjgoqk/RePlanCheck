@@ -1,0 +1,11 @@
+[
+  {
+    "name": "QuickRideVerified",
+    "provider": "Enterprise Fare Proxy",
+    "description": "Pre-approved read-only mirror for QuickRide fare estimates.",
+    "tool_type": "custom",
+    "path": "quick_ride_verified",
+    "clearances": [],
+    "permissions": []
+  }
+]

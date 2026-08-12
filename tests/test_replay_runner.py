@@ -9,13 +9,15 @@ replay = importlib.import_module("experiments.stages.03_deterministic_replay.run
 
 def _record(**overrides):
     record = {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "variant": "baseline",
         "git_commit": "commit",
         "plan_digest": "plan",
         "llm_model": "deepseek-v4-flash",
         "embedding_model": "BAAI/bge-small-en-v1.5",
         "temperature": 0.0,
+        "recovery_manifest": None,
+        "approved_substitutions": {},
         "expected_tools": ["QuickRide", "MetroHail"],
         "case_id": "case_1",
         "trial": 1,

@@ -4,6 +4,7 @@ import os
 import socket
 import threading
 import time
+from dataclasses import dataclass, replace
 from queue import Queue
 from typing import Any, cast
 
@@ -17,6 +18,15 @@ from ..schema.recovery import RepairPatch, ToolFailure
 from .sandbox import PlanExecutionSandbox, ToolExecutionSandbox
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ToolRunContext:
+    abstract_tool: str
+    sandbox: ToolExecutionSandbox
+    args: list[Any]
+    kwargs: dict[str, Any]
+    repair_patch_id: str | None = None
 
 
 class ExecutionAbortedError(RuntimeError):
@@ -35,7 +45,7 @@ class PlanOrchestrator:
     listener_thread: threading.Thread | None
     shutdown: threading.Event
     toolrunner_ids: set[str]
-    toolrunner_context: dict[str, tuple[str, ToolExecutionSandbox]]
+    toolrunner_context: dict[str, ToolRunContext]
     exception_queue: Queue
     result: ExecutionOutcome | None
     tool_use_history: list[str]
@@ -45,6 +55,7 @@ class PlanOrchestrator:
     tool_results: dict[str, ToolExecutionResult]
     execution_output_history: list[str]
     execution_variant: ExecutionVariant
+    approved_substitutions: dict[str, tuple[ConcreteToolBase, ...]]
 
     def __init__(
         self,
@@ -52,6 +63,7 @@ class PlanOrchestrator:
         tools: dict[str, ConcreteToolBase],
         event_handler: AgentEventHandler | None = None,
         execution_variant: ExecutionVariant = ExecutionVariant.M1,
+        approved_substitutions: dict[str, tuple[ConcreteToolBase, ...]] | None = None,
     ):
         logger.info("Initializing PlanOrchestrator")
         self.plan = plan
@@ -67,6 +79,7 @@ class PlanOrchestrator:
         self.tool_use_history = []
         self.event_handler = event_handler
         self.execution_variant = ExecutionVariant(execution_variant)
+        self.approved_substitutions = approved_substitutions or {}
         self.failure_history = []
         self.repair_history = []
         self.tool_results = {}
@@ -179,8 +192,17 @@ class PlanOrchestrator:
             self.exception_queue.put(ValueError(error_msg))
             return
 
-        # Execute tool and retrieve result
         tool = self.tools[tool_name]
+        self._launch_tool(tool_name, tool, tool_args, tool_kwargs)
+
+    def _launch_tool(
+        self,
+        abstract_tool: str,
+        tool: ConcreteToolBase,
+        tool_args: list[Any],
+        tool_kwargs: dict[str, Any],
+        repair_patch_id: str | None = None,
+    ) -> None:
         logger.debug(f"Executing tool: {tool.name} (provider: {tool.provider})")
         logger.log_execution(
             "TOOL_EXECUTE",
@@ -188,18 +210,24 @@ class PlanOrchestrator:
         )
 
         self.tool_execution_sandbox = ToolExecutionSandbox(tool)
-        self.tool_use_history.append(tool_name)
+        self.tool_use_history.append(abstract_tool)
 
         try:
             self.tool_execution_sandbox.launch(tool_args, tool_kwargs)
             if self.tool_execution_sandbox:
                 runner_id = self.tool_execution_sandbox.id
                 self.toolrunner_ids.add(runner_id)
-                self.toolrunner_context[runner_id] = (tool_name, self.tool_execution_sandbox)
-                logger.debug(f"Tool {tool_name} execution started with container ID: {runner_id}")
+                self.toolrunner_context[runner_id] = ToolRunContext(
+                    abstract_tool=abstract_tool,
+                    sandbox=self.tool_execution_sandbox,
+                    args=list(tool_args),
+                    kwargs=dict(tool_kwargs),
+                    repair_patch_id=repair_patch_id,
+                )
+                logger.debug(f"Tool {abstract_tool} execution started with container ID: {runner_id}")
         except Exception as e:
-            logger.error(f"Failed to execute tool {tool_name}: {e}", exc_info=True)
-            self.exception_queue.put(ValueError(f"Failed to execute tool {tool_name}: {e}"))
+            logger.error(f"Failed to execute tool {abstract_tool}: {e}", exc_info=True)
+            self.exception_queue.put(ValueError(f"Failed to execute tool {abstract_tool}: {e}"))
             error = "Tool failed to start."
             error_b64 = base64.b64encode(error.encode()).decode()
             if self.plan_execution_sandbox:
@@ -210,7 +238,10 @@ class PlanOrchestrator:
         self.execution_output_history.append(message)
 
     def flush_trusted_outputs(self) -> None:
-        if self.failure_history and self.execution_variant is ExecutionVariant.M1:
+        unsafe_partial = self.execution_variant is ExecutionVariant.M2 and (
+            self.result is None or self.result.status is not ExecutionStatus.SUCCESS
+        )
+        if self.failure_history and (self.execution_variant is ExecutionVariant.M1 or unsafe_partial):
             logger.info("Suppressing generated plan output because execution contains rejected tool results")
             self.execution_output_history.clear()
             return
@@ -228,6 +259,7 @@ class PlanOrchestrator:
         result: object,
         validation_error: Exception,
         abstract_tool: str | None = None,
+        run_context: ToolRunContext | None = None,
     ) -> None:
         abstract_tool = abstract_tool or (self.tool_use_history[-1] if self.tool_use_history else "")
         affected_fields: tuple[str, ...] = ()
@@ -268,6 +300,53 @@ class PlanOrchestrator:
             self.shutdown.set()
             return
 
+        if self.execution_variant is ExecutionVariant.M2:
+            replacements = self.approved_substitutions.get(abstract_tool, ())
+            if replacements and run_context and run_context.repair_patch_id is None:
+                replacement_tool = replacements[0]
+                approved_tools = tuple(
+                    sorted({self.tools[abstract_tool].name, *(candidate.name for candidate in replacements)})
+                )
+                approved_permissions = tuple(
+                    sorted(
+                        f"{candidate.name}:{permission.value}"
+                        for candidate in (self.tools[abstract_tool], *replacements)
+                        for permission in candidate.permissions
+                    )
+                )
+                failure, patch = self.repair_policy.propose_substitution(
+                    plan=self.plan,
+                    tools=self.tools,
+                    abstract_tool=abstract_tool,
+                    concrete_tool=tool,
+                    replacement_tool=replacement_tool,
+                    approved_tools=approved_tools,
+                    approved_permissions=approved_permissions,
+                    output=result,
+                    affected_fields=affected_fields,
+                )
+                self.failure_history.append(failure)
+                self.repair_history.append(patch)
+                self.tool_results[tool.name] = ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None)
+                if self.event_handler:
+                    self.event_handler.on_tool_failure(ToolFailureEvent(failure))
+                    self.event_handler.on_repair_applied(RepairAppliedEvent(patch))
+                self._launch_tool(
+                    abstract_tool,
+                    replacement_tool,
+                    run_context.args,
+                    run_context.kwargs,
+                    repair_patch_id=patch.patch_id,
+                )
+                return
+
+            self.tool_results[tool.name] = ToolExecutionResult(status=ToolResultStatus.REJECTED, value=None)
+            error_message = "Bounded substitution failed; resume through the trusted plan's exception handler."
+            error_b64 = base64.b64encode(error_message.encode()).decode()
+            if self.plan_execution_sandbox:
+                self.plan_execution_sandbox.send(f"ERROR:{error_b64}")
+            return
+
         failure, patch = self.repair_policy.propose_output_rejection(
             plan=self.plan,
             tools=self.tools,
@@ -298,11 +377,12 @@ class PlanOrchestrator:
         self.shutdown.set()
 
     def finalize_outcome(self, raw_final_output: Any) -> ExecutionOutcome:
-        outcome_factory = (
-            ExecutionOutcome.from_legacy_recovery
-            if self.execution_variant is ExecutionVariant.M0
-            else ExecutionOutcome.from_execution
-        )
+        if self.execution_variant is ExecutionVariant.M0:
+            outcome_factory = ExecutionOutcome.from_legacy_recovery
+        elif self.execution_variant is ExecutionVariant.M2:
+            outcome_factory = ExecutionOutcome.from_bounded_replan
+        else:
+            outcome_factory = ExecutionOutcome.from_execution
         outcome = outcome_factory(
             raw_final_output=raw_final_output,
             tool_results=self.tool_results,
@@ -312,6 +392,11 @@ class PlanOrchestrator:
         self.result = outcome
         self.flush_trusted_outputs()
         return outcome
+
+    def _complete_repair(self, patch_id: str) -> None:
+        self.repair_history = [
+            replace(patch, completed=True) if patch.patch_id == patch_id else patch for patch in self.repair_history
+        ]
 
     def _active_plan_id(self) -> str | None:
         sandbox = self.plan_execution_sandbox
@@ -384,11 +469,12 @@ class PlanOrchestrator:
                         result_dict = json.loads(result_json)
                         abstract_tool = ""
                         tool = None
-                        runner_context = self.toolrunner_context.get(id)
+                        runner_context = self.toolrunner_context.pop(id, None)
+                        self.toolrunner_ids.discard(id)
                         if runner_context:
-                            abstract_tool, tool_sandbox = runner_context
-                            tool = tool_sandbox.tool
-                            tool_sandbox.kill()
+                            abstract_tool = runner_context.abstract_tool
+                            tool = runner_context.sandbox.tool
+                            runner_context.sandbox.kill()
                         elif self.tool_execution_sandbox:
                             tool = self.tool_execution_sandbox.tool
                             self.tool_execution_sandbox.kill()
@@ -405,9 +491,8 @@ class PlanOrchestrator:
                                     result_dict,
                                     e,
                                     abstract_tool=abstract_tool,
+                                    run_context=runner_context,
                                 )
-                                if self.tool_execution_sandbox:
-                                    self.tool_execution_sandbox.kill()
                                 continue
 
                         if tool:
@@ -415,6 +500,8 @@ class PlanOrchestrator:
                                 status=ToolResultStatus.SUCCESS,
                                 value=result_dict,
                             )
+                        if runner_context and runner_context.repair_patch_id:
+                            self._complete_repair(runner_context.repair_patch_id)
 
                         # Encode validated dict and send to worker
                         if self.plan_execution_sandbox:

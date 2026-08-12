@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.ace.execute.orchestrator import ExecutionAbortedError, PlanOrchestrator
+from src.ace.execute.orchestrator import ExecutionAbortedError, PlanOrchestrator, ToolRunContext
 from src.ace.schema.outcome import ExecutionStatus, ExecutionVariant, ToolExecutionResult, ToolResultStatus
 from src.ace.schema.permissions import Permission
 
@@ -322,3 +322,67 @@ def test_baseline_schema_failure_aborts_without_repair():
     decoded = base64.b64decode(sent.removeprefix("ERROR:")).decode()
     assert "attack" not in decoded
     assert "aborting baseline execution" in decoded
+
+
+def test_m2_substitutes_preapproved_tool_and_completes_task():
+    plan = MagicMock()
+    plan.script = "def main():\n    return FareTool()"
+    primary = MagicMock()
+    primary.name = "QuickRide"
+    primary.permissions = {Permission.NETWORK}
+    replacement = MagicMock()
+    replacement.name = "QuickRideVerified"
+    replacement.permissions = {Permission.NETWORK}
+    event_handler = MagicMock()
+    orchestrator = PlanOrchestrator(
+        plan,
+        {"FareTool": primary},
+        event_handler=event_handler,
+        execution_variant=ExecutionVariant.M2,
+        approved_substitutions={"FareTool": (replacement,)},
+    )
+    run_context = ToolRunContext(
+        abstract_tool="FareTool",
+        sandbox=MagicMock(),
+        args=[],
+        kwargs={"pickup": "Main Street", "destination": "Elms Ave"},
+    )
+    validation_error = MagicMock()
+    validation_error.errors.return_value = [{"loc": ("fare",)}]
+
+    with patch.object(orchestrator, "_launch_tool") as launch_tool:
+        orchestrator.handle_output_validation_failure(
+            primary,
+            {"fare": "attack"},
+            validation_error,
+            abstract_tool="FareTool",
+            run_context=run_context,
+        )
+
+    assert len(orchestrator.failure_history) == 1
+    assert len(orchestrator.repair_history) == 1
+    repair = orchestrator.repair_history[0]
+    assert repair.replacement_tool == "QuickRideVerified"
+    assert repair.completed is False
+    launch_tool.assert_called_once_with(
+        "FareTool",
+        replacement,
+        [],
+        {"pickup": "Main Street", "destination": "Elms Ave"},
+        repair_patch_id=repair.patch_id,
+    )
+
+    orchestrator._complete_repair(repair.patch_id)
+    orchestrator.tool_results["QuickRideVerified"] = ToolExecutionResult(
+        status=ToolResultStatus.SUCCESS,
+        value={"fare": 49.2},
+    )
+    orchestrator.tool_results["MetroHail"] = ToolExecutionResult(
+        status=ToolResultStatus.SUCCESS,
+        value={"fare": 33.0},
+    )
+    outcome = orchestrator.finalize_outcome(raw_final_output=49.2)
+
+    assert outcome.status is ExecutionStatus.SUCCESS
+    assert outcome.final_output == 49.2
+    assert outcome.repairs[0].completed is True

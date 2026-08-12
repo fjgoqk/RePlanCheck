@@ -59,3 +59,46 @@ def test_repair_budget_is_bounded_per_tool():
 
     with pytest.raises(RepairRejectedError, match="budget exhausted"):
         policy.propose_output_rejection(plan, tools, "FareTool", tool, {"fare": "bad again"}, ("fare",))
+
+
+def test_substitution_patch_uses_only_preapproved_tools():
+    plan, tool, tools = make_context()
+    replacement = StubTool("QuickRideVerified", {Permission.NETWORK})
+    policy = RepairPolicy(max_repairs_per_tool=1)
+
+    failure, patch = policy.propose_substitution(
+        plan=plan,
+        tools=tools,
+        abstract_tool="FareTool",
+        concrete_tool=tool,
+        replacement_tool=replacement,
+        approved_tools=("QuickRide", "QuickRideVerified"),
+        approved_permissions=("QuickRide:network", "QuickRideVerified:network"),
+        output={"fare": "bad"},
+        affected_fields=("fare",),
+    )
+
+    assert patch.failure_id == failure.failure_id
+    assert patch.action is RepairAction.SUBSTITUTE_AND_RESUME
+    assert patch.replacement_tool == "QuickRideVerified"
+    assert patch.verified is True
+    assert patch.completed is False
+
+
+def test_substitution_rejects_unapproved_replacement():
+    plan, tool, tools = make_context()
+    replacement = StubTool("UnknownTool", {Permission.NETWORK})
+    policy = RepairPolicy()
+
+    with pytest.raises(RepairRejectedError, match="pre-approved"):
+        policy.propose_substitution(
+            plan=plan,
+            tools=tools,
+            abstract_tool="FareTool",
+            concrete_tool=tool,
+            replacement_tool=replacement,
+            approved_tools=("QuickRide",),
+            approved_permissions=("QuickRide:network",),
+            output={"fare": "bad"},
+            affected_fields=("fare",),
+        )

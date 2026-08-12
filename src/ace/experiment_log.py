@@ -9,11 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .schema.outcome import ExecutionOutcome
 
+EXPERIMENT_SCHEMA_VERSION = "1.3"
+
 
 class ExperimentRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    schema_version: str = "1.2"
+    schema_version: str = EXPERIMENT_SCHEMA_VERSION
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     query: str
@@ -32,6 +34,8 @@ class ExperimentRecord(BaseModel):
     plan_digest: str | None = None
     expected_tools: list[str] = Field(default_factory=list)
     mapped_tools: list[str] = Field(default_factory=list)
+    recovery_manifest: str | None = None
+    approved_substitutions: dict[str, list[str]] = Field(default_factory=dict)
     outcome: ExecutionOutcome
 
 
@@ -57,6 +61,8 @@ class JsonlExperimentWriter:
         plan_digest: str | None = None,
         expected_tools: list[str] | None = None,
         mapped_tools: list[str] | None = None,
+        recovery_manifest: str | None = None,
+        approved_substitutions: dict[str, list[str]] | None = None,
     ) -> ExperimentRecord:
         record = ExperimentRecord(
             query=query,
@@ -75,6 +81,8 @@ class JsonlExperimentWriter:
             plan_digest=plan_digest,
             expected_tools=expected_tools or [],
             mapped_tools=mapped_tools or [],
+            recovery_manifest=recovery_manifest,
+            approved_substitutions=approved_substitutions or {},
             outcome=outcome,
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
