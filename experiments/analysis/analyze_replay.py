@@ -123,7 +123,7 @@ def write_outputs(records: list[dict[str, Any]], summaries: list[dict[str, Any]]
     (output_dir / "summary.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
     with (output_dir / "summary.csv").open("w", encoding="utf-8", newline="") as output:
-        writer = csv.DictWriter(output, fieldnames=list(summaries[0]))
+        writer = csv.DictWriter(output, fieldnames=list(summaries[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(summaries)
 
