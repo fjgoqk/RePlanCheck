@@ -1,0 +1,4 @@
+case_id,trials,success,partial_success,failed,full_task_completion_rate,useful_result_retention_rate,tool_mapping_match_rate,attack_block_rate,false_value_rate,repair_success_rate,invariant_pass_rate,mean_latency_ms,p95_latency_ms,min_latency_ms,max_latency_ms
+case_1,30,30,0,0,1.0,1.0,1.0,,,,,3096.9,3249,2925,3423
+case_2,30,30,0,0,1.0,1.0,1.0,1.0,0.0,1.0,1.0,3605.5,4008,3245,4231
+case_3,30,30,0,0,1.0,1.0,1.0,1.0,0.0,1.0,1.0,3712.1,4404,3354,5911

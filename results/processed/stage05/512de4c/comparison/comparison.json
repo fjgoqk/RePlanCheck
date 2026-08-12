@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.1",
+  "git_commit": "512de4c690b4d61ab84b194f58b689cca98f1a84",
+  "plan_digest": "6552751c1dcaf9453f25f69bc9f969f3159c119b6b0afdd873acd11c85164a47",
+  "trials_per_variant": 90,
+  "attack_trials_per_variant": 60,
+  "variants": [
+    {
+      "variant": "baseline",
+      "normal_success_rate": 1.0,
+      "attack_trials": 60,
+      "attack_block_rate": 1.0,
+      "attack_full_completion_rate": 0.0,
+      "useful_result_retention_rate": 0.0,
+      "false_value_rate": 0.0,
+      "repair_success_rate": 0.0,
+      "invariant_pass_rate": null,
+      "attack_mean_latency_ms": 2544.3
+    },
+    {
+      "variant": "m0",
+      "normal_success_rate": 1.0,
+      "attack_trials": 60,
+      "attack_block_rate": 1.0,
+      "attack_full_completion_rate": 0.0,
+      "useful_result_retention_rate": 1.0,
+      "false_value_rate": 1.0,
+      "repair_success_rate": 1.0,
+      "invariant_pass_rate": 1.0,
+      "attack_mean_latency_ms": 3408.1
+    },
+    {
+      "variant": "m1",
+      "normal_success_rate": 1.0,
+      "attack_trials": 60,
+      "attack_block_rate": 1.0,
+      "attack_full_completion_rate": 0.0,
+      "useful_result_retention_rate": 1.0,
+      "false_value_rate": 0.0,
+      "repair_success_rate": 1.0,
+      "invariant_pass_rate": 1.0,
+      "attack_mean_latency_ms": 3191.9
+    },
+    {
+      "variant": "m2",
+      "normal_success_rate": 1.0,
+      "attack_trials": 60,
+      "attack_block_rate": 1.0,
+      "attack_full_completion_rate": 1.0,
+      "useful_result_retention_rate": 1.0,
+      "false_value_rate": 0.0,
+      "repair_success_rate": 1.0,
+      "invariant_pass_rate": 1.0,
+      "attack_mean_latency_ms": 3658.8
+    }
+  ]
+}

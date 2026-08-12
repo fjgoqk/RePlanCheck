@@ -91,7 +91,9 @@ def _add_rate_axis(root: ET.Element, left: int, top: int, bottom: int, right: in
         y = bottom - rate * (bottom - top)
         _element(root, "line", x1=left, y1=y, x2=right, y2=y, stroke="#D1D5DB", stroke_width=1)
         _text(root, left - 14, y + 5, f"{rate:.0%}", anchor="end", size=12, fill="#4B5563")
-    _text(root, 26, (top + bottom) / 2, "Rate", size=13, weight=600, fill="#374151")
+    label_y = (top + bottom) / 2
+    label = _text(root, 26, label_y, "Rate", size=13, weight=600, fill="#374151")
+    label.set("transform", f"rotate(-90 26 {label_y})")
 
 
 def build_effectiveness_figure(data: dict[str, Any]) -> ET.Element:
@@ -159,7 +161,9 @@ def build_latency_figure(data: dict[str, Any]) -> ET.Element:
         y = bottom - value / axis_max * (bottom - top)
         _element(root, "line", x1=left, y1=y, x2=right, y2=y, stroke="#D1D5DB", stroke_width=1)
         _text(root, left - 14, y + 5, str(value), anchor="end", size=12, fill="#4B5563")
-    _text(root, 28, (top + bottom) / 2, "Milliseconds", size=13, weight=600, fill="#374151")
+    label_y = (top + bottom) / 2
+    label = _text(root, 28, label_y, "Milliseconds", size=13, weight=600, fill="#374151")
+    label.set("transform", f"rotate(-90 28 {label_y})")
 
     slot = (right - left) / len(rows)
     bar_width = 96
