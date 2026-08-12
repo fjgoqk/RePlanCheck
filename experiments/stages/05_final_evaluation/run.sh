@@ -9,9 +9,9 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   exit 1
 fi
 
-MODE=()
+MODE_FLAG=""
 if [[ "${1:-}" == "--resume" ]]; then
-  MODE=(--resume)
+  MODE_FLAG="--resume"
   shift
 fi
 if [[ $# -ne 0 ]]; then
@@ -34,14 +34,14 @@ for variant in baseline m0 m1; do
     --case all \
     --trials 30 \
     --output "$RAW_DIR/${variant}.jsonl" \
-    "${MODE[@]}"
+    ${MODE_FLAG:+"$MODE_FLAG"}
 done
 
 ./experiments/stages/04_m2_bounded_replan/run.sh \
   --case all \
   --trials 30 \
   --output "$RAW_DIR/m2.jsonl" \
-  "${MODE[@]}"
+  ${MODE_FLAG:+"$MODE_FLAG"}
 
 for variant in baseline m0 m1 m2; do
   PYTHONPATH=src .venv/bin/python experiments/analysis/analyze_replay.py \
