@@ -50,6 +50,16 @@ experimental outcome rather than hidden by the fixture. Schema 1.2 records
 `mapped_tools` separately from executed `tool_results`, so an early baseline
 abort is not misclassified as a tool-mapping failure.
 
+## Baseline 30-Trial Result
+
+The baseline measurement completed 90/90 runs at commit `80496ba` using one
+plan digest. Case 1 completed successfully in 30/30 trials. Case 2 and Case 3
+detected and blocked the invalid tool output in 30/30 trials, but aborted before
+retaining the trusted MetroHail result: full-task completion and useful-result
+retention were both 0% for both attack cases.
+
+Reviewed aggregates are in `results/processed/stage03/baseline-80496ba/`.
+
 ## M1 30-Trial Result
 
 The first M1 measurement set completed 90/90 runs at commit `b326140` using one
