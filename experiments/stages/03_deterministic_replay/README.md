@@ -60,6 +60,20 @@ retention were both 0% for both attack cases.
 
 Reviewed aggregates are in `results/processed/stage03/baseline-80496ba/`.
 
+## M0 30-Trial Result
+
+The M0 measurement completed 90/90 runs at commit `80496ba` using the same
+plan digest as the baseline. Case 1 completed successfully in 30/30 trials.
+Case 2 and Case 3 blocked the invalid output, applied a verified local repair,
+and retained the trusted MetroHail result in 30/30 trials each.
+
+Both attack cases remained `partial_success`: full-task completion was 0% and
+useful-result retention was 100%. M0 exposed the generated plan's `0.0`
+fallback in every attack trial, producing a 100% false-value rate. This is the
+semantic-safety defect addressed by M1.
+
+Reviewed aggregates are in `results/processed/stage03/m0-80496ba/`.
+
 ## M1 30-Trial Result
 
 The first M1 measurement set completed 90/90 runs at commit `b326140` using one
