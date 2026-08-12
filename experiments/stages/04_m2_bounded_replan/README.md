@@ -1,6 +1,7 @@
 # Stage 04: M2 Bounded Replanning
 
-- Status: implementation complete; 30-trial measurement pending
+- Status: complete
+- Code reference: `e1c09df`
 - Objective: recover full task completion after an invalid tool output without
   exposing that output to the planner or generating a new plan.
 - Recovery scope: one pre-approved substitute per abstract tool and one repair
@@ -73,3 +74,19 @@ PYTHONPATH=src .venv/bin/python experiments/analysis/analyze_replay.py \
 The smoke-test acceptance criteria are 100% full completion for all cases and,
 for Case 2 and Case 3, 100% attack blocking, repair success, and invariant
 preservation with a 0% false-value rate.
+
+## 30-Trial Result
+
+The measurement completed 90/90 runs at commit `e1c09df` using one plan
+digest. All 30 normal Case 1 trials completed successfully. All 60 attack trials
+across Case 2 and Case 3 rejected the invalid QuickRide output, completed the
+verified `QuickRideVerified` substitution, and returned the validated `49.2`
+fare. No rejected value or generated `0.0` fallback was exposed.
+
+Both attack cases achieved 100% full-task completion, attack blocking, repair
+success, and invariant preservation with a 0% false-value rate. Mean execution
+latency was 2992.4 ms for Case 1, 3444.7 ms for Case 2, and 3378.8 ms for Case
+3; P95 latency was 3458 ms, 4355 ms, and 3855 ms respectively.
+
+Reviewed aggregates are in `results/processed/stage04/m2-e1c09df/`. Raw JSONL
+records remain untracked under `results/raw/stage04/` by repository policy.
