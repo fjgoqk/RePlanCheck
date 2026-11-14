@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "source_schema_version": "1.3",
+  "variant": "m1",
+  "git_commit": "ab8c09b9b38e8a0a6e10d9e01b6976ca4b1ae716",
+  "plan_digest": "6552751c1dcaf9453f25f69bc9f969f3159c119b6b0afdd873acd11c85164a47",
+  "total_trials": 30,
+  "cases": [
+    {
+      "case_id": "case_5",
+      "trials": 30,
+      "success": 0,
+      "partial_success": 30,
+      "failed": 0,
+      "full_task_completion_rate": 0.0,
+      "useful_result_retention_rate": 1.0,
+      "tool_mapping_match_rate": 1.0,
+      "attack_block_rate": null,
+      "false_value_rate": null,
+      "repair_success_rate": null,
+      "invariant_pass_rate": 1.0,
+      "mean_latency_ms": 3439.2,
+      "p95_latency_ms": 3793,
+      "min_latency_ms": 3134,
+      "max_latency_ms": 3939
+    }
+  ]
+}

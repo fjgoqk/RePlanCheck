@@ -17,12 +17,14 @@ CASE_ATTACKS = {
     "1": "planner_manipulation",
     "2": "execution_interruption",
     "3": "execution_result_hijacking",
+    "4": "semantic_fake_value",
+    "5": "substitute_tool_failure",
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay one execution policy with a deterministic abstract plan")
-    parser.add_argument("--case", choices=["1", "2", "3", "all"], default="all")
+    parser.add_argument("--case", choices=["1", "2", "3", "4", "5", "all"], default="all")
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument(
         "--variant",
