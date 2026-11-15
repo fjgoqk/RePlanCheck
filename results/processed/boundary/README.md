@@ -59,3 +59,36 @@ experiments/stages/04_m2_bounded_replan/run_case5.sh --trials 30 \
 its `false_value_rate` is N/A for case 4/5 (attack-case set is `{case_2, case_3}`).
 Extending it requires a value-aware oracle (compare tool output against ground
 truth), tracked as follow-up work.
+
+## Case 6 (2026-11-15, composed A2 cell)
+
+Composed attacker cell answering the review question: what happens when the
+substitute is poisoned with a *schema-valid* semantic fake (A2: original tool
+malformed-poisoned + substitute returns the fake fare 0.01)?
+
+- Assets: `benchmarks/case_studies/case_6/` (case manifest = case 5's);
+  recovery manifest `experiments/stages/04_m2_bounded_replan/tools/manifest_case6.json`;
+  runner `experiments/stages/04_m2_bounded_replan/run_case6.sh` (run_case6.py).
+- Command: `./experiments/stages/04_m2_bounded_replan/run_case6.sh --trials 30 --output results/raw/boundary/m2-case6.jsonl --overwrite`
+
+### Result (M2, n = 30)
+
+| Metric | Value |
+|---|---|
+| full completion | 30/30 |
+| useful retention | 30/30 |
+| false value (final_output == 0.01) | **30/30** |
+| completed substitution | 30/30 |
+| invariant pass | 30/30 |
+
+### Finding 3 (Case 6)
+
+The composed A2-semantic cell confirms the mechanism's detection boundary
+empirically: the poisoned substitute's schema-valid fake fare passes the
+adapter's output validation and re-enters the plan as a business result, so the
+task "completes" (30/30) while the false value propagates (30/30) — with every
+checked bookkeeping invariant passing. The zero-false-value claim therefore
+holds only against schema-detectable failures (Cases 2/3/5); a semantic fake
+from the substitute lies outside the checked surface, exactly as Case 4 shows
+for the original tool. This cell is reported in the paper's Evaluation and
+bounds the threat-model claims.
