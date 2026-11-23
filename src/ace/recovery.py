@@ -67,6 +67,27 @@ class RepairPolicy:
             raise ValueError("max_repairs_per_tool must be at least 1")
         self.max_repairs_per_tool = max_repairs_per_tool
         self._attempts: defaultdict[str, int] = defaultdict(int)
+        self._baseline: tuple[str, tuple[str, ...], tuple[str, ...]] | None = None
+
+    def arm_baseline(self, plan: AbstractPlan, tools: dict[str, ConcreteToolBase]) -> None:
+        """Freeze the launch-time baseline (Gamma) for subsequent repair checks."""
+
+        baseline = (
+            _digest_text(str(plan.script)),
+            _tool_names(tools),
+            _permissions(tools),
+        )
+        if self._baseline is not None and self._baseline != baseline:
+            raise RepairRejectedError("Recovery baseline (Gamma) has already been armed")
+        self._baseline = baseline
+
+    def _arm_compatibility_baseline(
+        self, plan: AbstractPlan, tools: dict[str, ConcreteToolBase]
+    ) -> None:
+        """Arm policies used outside the production orchestrator on first proposal."""
+
+        if self._baseline is None:
+            self.arm_baseline(plan, tools)
 
     def propose_output_rejection(
         self,
@@ -77,6 +98,7 @@ class RepairPolicy:
         output: object,
         affected_fields: tuple[str, ...],
     ) -> tuple[ToolFailure, RepairPatch]:
+        self._arm_compatibility_baseline(plan, tools)
         attempt = self._attempts[abstract_tool] + 1
         if attempt > self.max_repairs_per_tool:
             raise RepairRejectedError(f"Repair budget exhausted for {abstract_tool}")
@@ -124,11 +146,10 @@ class RepairPolicy:
         output: object,
         affected_fields: tuple[str, ...],
     ) -> tuple[ToolFailure, RepairPatch]:
+        self._arm_compatibility_baseline(plan, tools)
         attempt = self._attempts[abstract_tool] + 1
         if attempt > self.max_repairs_per_tool:
             raise RepairRejectedError(f"Repair budget exhausted for {abstract_tool}")
-        if concrete_tool.name not in approved_tools or replacement_tool.name not in approved_tools:
-            raise RepairRejectedError("Substitution uses a tool outside the pre-approved recovery set")
         if concrete_tool.name == replacement_tool.name:
             raise RepairRejectedError("Substitution must select a different concrete tool")
 
@@ -151,30 +172,47 @@ class RepairPolicy:
             replacement_tool=replacement_tool.name,
             plan_digest_before=plan_digest,
             plan_digest_after=plan_digest,
-            tools_before=approved_tools,
-            tools_after=approved_tools,
-            permissions_before=approved_permissions,
-            permissions_after=approved_permissions,
+            tools_before=_tool_names(tools),
+            tools_after=_tool_names(tools),
+            permissions_before=_permissions(tools),
+            permissions_after=_permissions(tools),
             attempt=attempt,
             completed=False,
         )
-        self.verify(candidate)
+        self.verify(
+            candidate,
+            approved_tools=approved_tools,
+        )
         self._attempts[abstract_tool] = attempt
         return failure, replace(candidate, verified=True)
 
-    def verify(self, patch: RepairPatch) -> None:
+    def verify(
+        self,
+        patch: RepairPatch,
+        *,
+        approved_tools: tuple[str, ...] | None = None,
+    ) -> None:
         if patch.action not in {RepairAction.REJECT_OUTPUT_AND_RESUME, RepairAction.SUBSTITUTE_AND_RESUME}:
             raise RepairRejectedError("Unsupported repair action")
-        if patch.plan_digest_before != patch.plan_digest_after:
-            raise RepairRejectedError("Repair changes the trusted plan")
-        if patch.tools_before != patch.tools_after:
-            raise RepairRejectedError("Repair changes the approved tool set")
-        if patch.permissions_before != patch.permissions_after:
-            raise RepairRejectedError("Repair changes the approved permissions")
         if patch.attempt > self.max_repairs_per_tool:
             raise RepairRejectedError("Repair exceeds the per-tool budget")
+        if self._baseline is None:
+            raise RepairRejectedError("Recovery baseline (Gamma) has not been armed at launch")
+
+        plan_digest, tool_names, permissions = self._baseline
+        if patch.plan_digest_before != plan_digest or patch.plan_digest_after != plan_digest:
+            raise RepairRejectedError("Repair patch diverges from the launch-time plan digest")
+        if patch.tools_before != tool_names or patch.tools_after != tool_names:
+            raise RepairRejectedError("Repair patch diverges from the launch-time tool set")
+        if patch.permissions_before != permissions or patch.permissions_after != permissions:
+            raise RepairRejectedError("Repair patch diverges from the launch-time permissions")
+
         if patch.action is RepairAction.SUBSTITUTE_AND_RESUME:
             if not patch.replacement_tool:
                 raise RepairRejectedError("Substitution is missing a replacement tool")
-            if patch.concrete_tool not in patch.tools_before or patch.replacement_tool not in patch.tools_before:
-                raise RepairRejectedError("Substitution tool is outside the approved tool set")
+            if (
+                approved_tools is None
+                or patch.concrete_tool not in approved_tools
+                or patch.replacement_tool not in approved_tools
+            ):
+                raise RepairRejectedError("Substitution uses a tool outside the pre-approved recovery set")

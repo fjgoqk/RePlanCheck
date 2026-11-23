@@ -2,7 +2,7 @@ import ast
 import json
 
 import astor
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ToolParameter(BaseModel):
@@ -122,6 +122,8 @@ class AnnotationTransformer(ast.NodeTransformer):
 
 
 class AbstractPlan(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     script: str
     abs_tools: list[AbstractTool]
 

@@ -85,6 +85,7 @@ class PlanOrchestrator:
         self.tool_results = {}
         self.execution_output_history = []
         self.repair_policy = RepairPolicy(max_repairs_per_tool=1)
+        self.repair_policy.arm_baseline(plan, tools)
 
         logger.debug(f"Plan has {len(plan.abs_tools)} abstract tools")
         logger.debug(f"Tool mapping has {len(tools)} concrete tools")
