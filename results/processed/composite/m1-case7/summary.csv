@@ -1,0 +1,2 @@
+variant,case_id,trials,success,partial_success,failed,full_task_completion_count,full_task_completion_rate,useful_result_retention_count,useful_result_retention_rate,false_value_propagation_count,false_value_propagation_rate,budget_consumed_total,budget_exhaustion_count,explicit_degradation_count,recovery_substitution_count,substitute_source_marker_count,poisoned_source_marker_count
+m1,case_7,30,0,30,0,0,0.0,30,1.0,30,1.0,0,0,30,0,0,60
