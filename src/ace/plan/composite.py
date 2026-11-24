@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import ast
 from collections import deque
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..recovery import RepairPolicy
 from ..schema.abstract import AbstractPlan, AbstractTool
+from ..schema.concrete import ConcreteToolBase
+from ..schema.recovery import FailureKind, RepairPatch, ToolFailure
 
 
 class BudgetExhausted(RuntimeError):  # noqa: N818 - public API name required by the recovery protocol
@@ -20,6 +24,26 @@ class RecoveryDegradedEvent:
 
     step_id: str
     reason: str = "recovery_budget_exhausted"
+
+
+@dataclass(frozen=True)
+class RecoverySubstitutedEvent:
+    """Record a verified replacement whose output was written back to a step."""
+
+    step_id: str
+    replacement_tool: str
+    failure: ToolFailure
+    patch: RepairPatch
+
+
+class _Bottom:
+    """Unforgeable marker for a step that has no validated output."""
+
+    def __repr__(self) -> str:
+        return "⊥"
+
+
+BOTTOM = _Bottom()
 
 
 @dataclass(frozen=True)
@@ -201,9 +225,9 @@ class Provenance:
         return f"step:{step_id}"
 
     @staticmethod
-    def substitute_label(tool: str | AbstractTool) -> str:
+    def substitute_label(tool: str | AbstractTool | ConcreteToolBase) -> str:
         """Return the canonical source label for a substitute tool."""
-        tool_name = tool.name if isinstance(tool, AbstractTool) else tool
+        tool_name = tool if isinstance(tool, str) else tool.name
         return f"substitute:{tool_name}"
 
     @staticmethod
@@ -219,6 +243,7 @@ class CompositePlan:
 
     graph: DependencyGraph = field(default_factory=DependencyGraph)
     provenance: Provenance = field(default_factory=Provenance)
+    output_slots: dict[tuple[str, str], Any] = field(default_factory=dict)
     total_budget: int | None = None
     _budget_allocator: BudgetAllocator = field(init=False, repr=False)
 
@@ -244,9 +269,20 @@ class CompositePlan:
         """Consume one recovery attempt for a step and return its remaining budget."""
         return self._budget_allocator.consume(step)
 
-    def degrade(self, step: str | PlanStep) -> RecoveryDegradedEvent:
+    def degrade(
+        self,
+        step: str | PlanStep,
+        reason: str = "recovery_budget_exhausted",
+    ) -> RecoveryDegradedEvent:
         """Permanently route a step to its degraded path and record the decision."""
-        return self._budget_allocator.degrade(step)
+        return self._budget_allocator.degrade(step, reason)
+
+    def output_for(self, step: str | PlanStep, output: str = "result") -> Any:
+        """Return a value previously written to a step output slot."""
+        step_id = step.id if isinstance(step, PlanStep) else step
+        if step_id not in self.graph.steps:
+            raise KeyError(f"Unknown plan step: {step_id}")
+        return self.output_slots[(step_id, output)]
 
     @classmethod
     def from_abstract_plan(cls, plan: AbstractPlan) -> CompositePlan:
@@ -315,11 +351,15 @@ class BudgetAllocator:
         """Consume one recovery attempt through the orchestration-facing API."""
         return self.consume(step)
 
-    def degrade(self, step: str | PlanStep) -> RecoveryDegradedEvent:
+    def degrade(
+        self,
+        step: str | PlanStep,
+        reason: str = "recovery_budget_exhausted",
+    ) -> RecoveryDegradedEvent:
         """Permanently disable recovery for a step and record that decision."""
         step_id = self._step_id(step)
         self._degraded.add(step_id)
-        event = RecoveryDegradedEvent(step_id=step_id)
+        event = RecoveryDegradedEvent(step_id=step_id, reason=reason)
         self._events.append(event)
         return event
 
@@ -328,6 +368,144 @@ class BudgetAllocator:
         if step_id not in self._remaining_by_step:
             raise KeyError(f"Unknown plan step: {step_id}")
         return step_id
+
+
+RecoveryInvoker = Callable[[ConcreteToolBase, Mapping[str, Any]], object]
+
+
+class CompositeRecovery:
+    """Apply bounded, pre-authorized WP1 substitution to a composite plan.
+
+    ``approved_substitutions`` is the launch-time recovery set. Its members are
+    treated as read-only and idempotent by the caller's pre-authorization; this
+    class rechecks the machine-representable schema, clearance, and permission
+    constraints before asking :class:`RepairPolicy` to authorize a patch.
+    """
+
+    def __init__(
+        self,
+        plan: CompositePlan,
+        abstract_plan: AbstractPlan,
+        selected_tools: Mapping[str, ConcreteToolBase],
+        approved_substitutions: Mapping[str, Sequence[ConcreteToolBase]],
+        invoke: RecoveryInvoker,
+        repair_policy: RepairPolicy | None = None,
+    ) -> None:
+        self.plan = plan
+        self.abstract_plan = abstract_plan
+        self.selected_tools = dict(selected_tools)
+        self.approved_substitutions = {name: tuple(substitutes) for name, substitutes in approved_substitutions.items()}
+        self.invoke = invoke
+        self.repair_policy = repair_policy or RepairPolicy()
+        self.repair_policy.arm_baseline(abstract_plan, self.selected_tools)
+        self._events: list[RecoverySubstitutedEvent | RecoveryDegradedEvent] = []
+
+    @property
+    def events(self) -> tuple[RecoverySubstitutedEvent | RecoveryDegradedEvent, ...]:
+        """Return substitution and degradation records in occurrence order."""
+        return tuple(self._events)
+
+    def recover(
+        self,
+        step: str | PlanStep,
+        unverified_output: object,
+        inputs: Mapping[str, Any],
+        *,
+        affected_fields: tuple[str, ...] = (),
+        failure_kind: FailureKind | str = FailureKind.OUTPUT_SCHEMA_VALIDATION,
+    ) -> object:
+        """Recover one H1 output failure, or write ``BOTTOM`` on degradation."""
+        plan_step = self._step(step)
+        if not self._is_h1(failure_kind):
+            return self._degrade(plan_step, "failure_not_h1")
+        if not self.plan.can_recover(plan_step):
+            return self._degrade(plan_step, "recovery_budget_exhausted")
+
+        selected = self.selected_tools.get(plan_step.tool.name)
+        substitutes = self.approved_substitutions.get(plan_step.tool.name, ())
+        replacement = next(
+            (candidate for candidate in substitutes if selected and self._eligible(selected, candidate)),
+            None,
+        )
+        if selected is None or replacement is None:
+            return self._degrade(plan_step, "no_approved_substitute")
+
+        approved_names = tuple(sorted({selected.name, *(tool.name for tool in substitutes)}))
+        approved_permissions = tuple(
+            sorted(
+                f"{tool.name}:{permission.value}"
+                for tool in (selected, *substitutes)
+                for permission in tool.permissions
+            )
+        )
+        try:
+            failure, patch = self.repair_policy.propose_substitution(
+                plan=self.abstract_plan,
+                tools=self.selected_tools,
+                abstract_tool=plan_step.tool.name,
+                concrete_tool=selected,
+                replacement_tool=replacement,
+                approved_tools=approved_names,
+                approved_permissions=approved_permissions,
+                output=unverified_output,
+                affected_fields=affected_fields,
+            )
+            raw_output = self.invoke(replacement, inputs)
+            validated = plan_step.tool.output_schema.model_validate(raw_output)
+        except Exception:
+            return self._degrade(plan_step, "substitution_failed")
+
+        self.plan.consume_for(plan_step)
+        values = validated.model_dump()
+        label = Provenance.substitute_label(replacement.name)
+        for output_name, value in values.items():
+            self.plan.output_slots[(plan_step.id, output_name)] = value
+            self.plan.provenance.add_source(plan_step.id, output_name, label)
+        event = RecoverySubstitutedEvent(
+            step_id=plan_step.id,
+            replacement_tool=replacement.name,
+            failure=failure,
+            patch=patch,
+        )
+        self._events.append(event)
+        return values
+
+    def _degrade(self, step: PlanStep, reason: str) -> _Bottom:
+        event = self.plan.degrade(step, reason)
+        self._events.append(event)
+        output_names = tuple(step.tool.output_schema.model_fields) or ("result",)
+        for output_name in output_names:
+            self.plan.output_slots[(step.id, output_name)] = BOTTOM
+        return BOTTOM
+
+    def _step(self, step: str | PlanStep) -> PlanStep:
+        step_id = step.id if isinstance(step, PlanStep) else step
+        try:
+            return self.plan.graph.steps[step_id]
+        except KeyError:
+            raise KeyError(f"Unknown plan step: {step_id}") from None
+
+    @staticmethod
+    def _is_h1(failure_kind: FailureKind | str) -> bool:
+        return failure_kind in {FailureKind.OUTPUT_SCHEMA_VALIDATION, "H1"}
+
+    @staticmethod
+    def _eligible(selected: ConcreteToolBase, replacement: ConcreteToolBase) -> bool:
+        if selected.name == replacement.name:
+            return False
+        if selected.clearances != replacement.clearances:
+            return False
+        if not replacement.permissions.issubset(selected.permissions):
+            return False
+        return CompositeRecovery._schema_equal(
+            selected.args_schema, replacement.args_schema
+        ) and CompositeRecovery._schema_equal(selected.output_schema, replacement.output_schema)
+
+    @staticmethod
+    def _schema_equal(left: type[Any] | None, right: type[Any] | None) -> bool:
+        if left is None or right is None:
+            return left is right
+        return left.model_json_schema() == right.model_json_schema()
 
 
 @dataclass(frozen=True)

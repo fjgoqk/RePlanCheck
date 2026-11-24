@@ -2,16 +2,23 @@ import pytest
 from pydantic import BaseModel
 
 from src.ace.plan.composite import (
+    BOTTOM,
     BudgetAllocator,
     BudgetExhausted,
     CompositePlan,
+    CompositeRecovery,
     DependencyGraph,
     PlanStep,
     Provenance,
     RecoveryDegradedEvent,
+    RecoverySubstitutedEvent,
     from_abstract_plan,
 )
+from src.ace.recovery import RepairPolicy
 from src.ace.schema.abstract import AbstractPlan, AbstractTool
+from src.ace.schema.concrete import ConcreteToolBase
+from src.ace.schema.permissions import Permission
+from src.ace.schema.recovery import FailureKind, RepairAction
 
 
 class EmptyInput(BaseModel):
@@ -211,3 +218,190 @@ def test_budget_allocator_rejects_negative_total_and_unknown_steps():
         BudgetAllocator(plan, total_budget=-1)
     with pytest.raises(KeyError, match="missing"):
         plan.can_recover("missing")
+
+
+class RecoveryTool(ConcreteToolBase):
+    def generate_source(self) -> str:
+        return "def main():\n    return {'value': 'recovered'}\n"
+
+
+def make_recovery_tool(
+    name: str,
+    *,
+    clearances: set[str] | None = None,
+    permissions: set[Permission] | None = None,
+) -> RecoveryTool:
+    return RecoveryTool(
+        name=name,
+        provider="test",
+        description="recovery fixture",
+        clearances=clearances or {"public"},
+        permissions=permissions or set(),
+        args_schema=EmptyInput,
+        output_schema=ValueOutput,
+    )
+
+
+def make_recovery_context(
+    *,
+    budget: int = 1,
+    total_budget: int | None = None,
+    substitutes: tuple[RecoveryTool, ...] | None = None,
+):
+    abstract_tool = make_tool("Lookup")
+    step = PlanStep(id="lookup", tool=abstract_tool, budget=budget)
+    composite = make_composite(step, total_budget=total_budget)
+    abstract_plan = AbstractPlan(
+        script="def main():\n    return Lookup()",
+        abs_tools=[abstract_tool],
+    )
+    selected = make_recovery_tool("LookupPrimary")
+    replacement = make_recovery_tool("LookupMirror")
+    recovery = CompositeRecovery(
+        plan=composite,
+        abstract_plan=abstract_plan,
+        selected_tools={"Lookup": selected},
+        approved_substitutions={"Lookup": substitutes if substitutes is not None else (replacement,)},
+        invoke=lambda tool, inputs: {"value": f"{tool.name}:{len(inputs)}"},
+    )
+    return composite, step, abstract_plan, selected, replacement, recovery
+
+
+def test_composite_recovery_substitutes_and_consumes_budget():
+    plan, step, _, _, _, recovery = make_recovery_context()
+
+    result = recovery.recover(step, {"value": 7}, {})
+
+    assert result == {"value": "LookupMirror:0"}
+    assert plan.output_for(step, "value") == "LookupMirror:0"
+    assert plan.budget_allocator.consumed == 1
+
+
+def test_composite_recovery_budget_exhaustion_degrades_to_bottom():
+    plan, step, _, _, _, recovery = make_recovery_context(budget=1)
+    recovery.recover(step, {"value": 7}, {})
+
+    result = recovery.recover(step, {"value": 8}, {})
+
+    assert result is BOTTOM
+    assert plan.output_for(step, "value") is BOTTOM
+    assert recovery.events[-1] == RecoveryDegradedEvent(step_id="lookup", reason="recovery_budget_exhausted")
+
+
+def test_composite_recovery_without_substitute_degrades_without_forging_value():
+    plan, step, _, _, _, recovery = make_recovery_context(substitutes=())
+
+    result = recovery.recover(step, {"value": "untrusted"}, {})
+
+    assert result is BOTTOM
+    assert plan.output_for(step, "value") is BOTTOM
+    assert plan.budget_allocator.consumed == 0
+    assert plan.recovery_events[-1].reason == "no_approved_substitute"
+
+
+def test_composite_recovery_writes_substitute_provenance_label():
+    plan, step, _, _, replacement, recovery = make_recovery_context()
+
+    recovery.recover(step, {"value": "bad"}, {})
+
+    assert Provenance.substitute_label(replacement) in plan.provenance.sources_for(step.id, "value")
+
+
+def test_composite_recovery_records_verified_substitution_event():
+    _, step, _, _, replacement, recovery = make_recovery_context()
+
+    recovery.recover(step, {"value": "bad"}, {}, affected_fields=("value",))
+
+    event = recovery.events[-1]
+    assert isinstance(event, RecoverySubstitutedEvent)
+    assert event.replacement_tool == replacement.name
+    assert event.failure.affected_fields == ("value",)
+    assert event.patch.verified
+    assert event.patch.action is RepairAction.SUBSTITUTE_AND_RESUME
+
+
+def test_single_step_composite_recovery_matches_wp1_substitution_semantics():
+    _, step, abstract_plan, selected, replacement, recovery = make_recovery_context()
+    policy = RepairPolicy()
+    _, wp1_patch = policy.propose_substitution(
+        plan=abstract_plan,
+        tools={"Lookup": selected},
+        abstract_tool="Lookup",
+        concrete_tool=selected,
+        replacement_tool=replacement,
+        approved_tools=(selected.name, replacement.name),
+        approved_permissions=(),
+        output={"value": "bad"},
+        affected_fields=("value",),
+    )
+
+    result = recovery.recover(
+        step,
+        {"value": "bad"},
+        {},
+        affected_fields=("value",),
+    )
+    composite_event = recovery.events[-1]
+
+    assert result == {"value": "LookupMirror:0"}
+    assert isinstance(composite_event, RecoverySubstitutedEvent)
+    assert composite_event.patch.action is wp1_patch.action
+    assert composite_event.patch.replacement_tool == wp1_patch.replacement_tool
+    assert composite_event.patch.tools_before == wp1_patch.tools_before
+    assert composite_event.patch.permissions_before == wp1_patch.permissions_before
+
+
+def test_composite_recovery_total_consumption_never_exceeds_total_budget():
+    first = PlanStep(id="first", tool=make_tool("First"), budget=2)
+    second = PlanStep(id="second", tool=make_tool("Second"), budget=2)
+    plan = make_composite(first, second, total_budget=1)
+    abstract_plan = AbstractPlan(
+        script="def main():\n    First()\n    return Second()",
+        abs_tools=[first.tool, second.tool],
+    )
+    selected = {
+        "First": make_recovery_tool("FirstPrimary"),
+        "Second": make_recovery_tool("SecondPrimary"),
+    }
+    recovery = CompositeRecovery(
+        plan,
+        abstract_plan,
+        selected,
+        {
+            "First": (make_recovery_tool("FirstMirror"),),
+            "Second": (make_recovery_tool("SecondMirror"),),
+        },
+        lambda tool, inputs: {"value": tool.name},
+    )
+
+    recovery.recover(first, {"value": "bad"}, {})
+    recovery.recover(second, {"value": "bad"}, {})
+
+    assert plan.budget_allocator.consumed == plan.total_budget == 1
+    assert plan.output_for(second, "value") is BOTTOM
+
+
+def test_composite_recovery_rejects_non_h1_failure():
+    plan, step, _, _, _, recovery = make_recovery_context()
+
+    result = recovery.recover(step, {"value": "bad"}, {}, failure_kind="H2")
+
+    assert result is BOTTOM
+    assert plan.budget_allocator.consumed == 0
+    assert recovery.events[-1] == RecoveryDegradedEvent(step_id="lookup", reason="failure_not_h1")
+
+
+def test_composite_recovery_rejects_permission_increase_before_invocation():
+    unsafe = make_recovery_tool("UnsafeMirror", permissions={Permission.NETWORK})
+    plan, step, _, _, _, recovery = make_recovery_context(substitutes=(unsafe,))
+
+    result = recovery.recover(
+        step,
+        {"value": "bad"},
+        {},
+        failure_kind=FailureKind.OUTPUT_SCHEMA_VALIDATION,
+    )
+
+    assert result is BOTTOM
+    assert plan.budget_allocator.consumed == 0
+    assert plan.recovery_events[-1].reason == "no_approved_substitute"
